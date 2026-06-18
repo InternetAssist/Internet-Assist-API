@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+import base64
 import mimetypes
-import smtplib
-from email.message import EmailMessage
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from html import escape
 from pathlib import Path
 
+import requests
 from flask import current_app
 
 from app.logging import logger
@@ -25,6 +23,78 @@ _TICKET_LABELS = {
     'job_application': 'Job Application',
     'remote_support':  'Remote Support Request',
 }
+
+_GRAPH_TOKEN_URL = 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
+_GRAPH_SEND_URL  = 'https://graph.microsoft.com/v1.0/users/{sender}/sendMail'
+
+
+def _get_access_token() -> str | None:
+    tenant_id     = current_app.config.get('GRAPH_TENANT_ID', '')
+    client_id     = current_app.config.get('GRAPH_CLIENT_ID', '')
+    client_secret = current_app.config.get('GRAPH_CLIENT_SECRET', '')
+    if not (tenant_id and client_id and client_secret):
+        return None
+    resp = requests.post(
+        _GRAPH_TOKEN_URL.format(tenant_id=tenant_id),
+        data={
+            'grant_type':    'client_credentials',
+            'client_id':     client_id,
+            'client_secret': client_secret,
+            'scope':         'https://graph.microsoft.com/.default',
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()['access_token']
+
+
+def _graph_send(
+    *,
+    to: list[str],
+    subject: str,
+    html: str,
+    plain: str,
+    reply_to: str | None = None,
+    attachments: list[tuple[bytes, str]] | None = None,
+) -> None:
+    sender = current_app.config.get('GRAPH_SENDER', '')
+    token  = _get_access_token()
+
+    message: dict = {
+        'subject': subject,
+        'body': {'contentType': 'HTML', 'content': html},
+        'toRecipients': [{'emailAddress': {'address': addr}} for addr in to],
+    }
+    if reply_to:
+        message['replyTo'] = [{'emailAddress': {'address': reply_to}}]
+
+    if attachments:
+        message['attachments'] = []
+        for data, filename in attachments:
+            ctype, _ = mimetypes.guess_type(filename)
+            message['attachments'].append({
+                '@odata.type':  '#microsoft.graph.fileAttachment',
+                'name':         filename,
+                'contentType':  ctype or 'application/octet-stream',
+                'contentBytes': base64.b64encode(data).decode(),
+            })
+
+    resp = requests.post(
+        _GRAPH_SEND_URL.format(sender=sender),
+        json={'message': message, 'saveToSentItems': False},
+        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+
+def _graph_configured() -> bool:
+    return bool(
+        current_app.config.get('GRAPH_TENANT_ID')
+        and current_app.config.get('GRAPH_CLIENT_ID')
+        and current_app.config.get('GRAPH_CLIENT_SECRET')
+        and current_app.config.get('GRAPH_SENDER')
+    )
 
 
 def _build_html(ticket_type: str, ticket_id: str, fields: dict) -> str:
@@ -101,39 +171,8 @@ def _recipients() -> list[str]:
     return [e.strip() for e in emails if e.strip()]
 
 
-def _smtp_connection():
-    """Return a connected, authenticated SMTP object, or None if credentials missing."""
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
-        return None, username, password
-    host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-    port    = int(current_app.config.get('SMTP_PORT', 587))
-    use_tls = current_app.config.get('SMTP_USE_TLS', True)
-    smtp = smtplib.SMTP(host, port, timeout=15)
-    if use_tls:
-        smtp.starttls()
-    smtp.login(username, password)
-    return smtp, username, password
-
-
-def _make_base_msg(subject: str, recipients: list[str], reply_to: str | None,
-                   plain: str, html: str) -> MIMEMultipart:
-    msg = MIMEMultipart('alternative')
-    msg['From']    = current_app.config.get('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    msg['To']      = ', '.join(recipients)
-    msg['Subject'] = subject
-    if reply_to:
-        msg['Reply-To'] = reply_to
-    msg.attach(MIMEText(plain, 'plain'))
-    msg.attach(MIMEText(html, 'html'))
-    return msg
-
-
 def send_otp(recipient: str, full_name: str, code: str) -> bool:
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
+    if not _graph_configured():
         logger.info('email_skipped_no_credentials', action='otp')
         return True
 
@@ -170,22 +209,8 @@ def send_otp(recipient: str, full_name: str, code: str) -> bool:
         "If you did not attempt to sign in, change your password immediately."
     )
 
-    msg = MIMEMultipart('alternative')
-    msg['From']    = current_app.config.get('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    msg['To']      = recipient
-    msg['Subject'] = subject
-    msg.attach(MIMEText(plain, 'plain'))
-    msg.attach(MIMEText(html, 'html'))
-
     try:
-        host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-        port    = int(current_app.config.get('SMTP_PORT', 587))
-        use_tls = current_app.config.get('SMTP_USE_TLS', True)
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
-            smtp.login(username, password)
-            smtp.sendmail(msg['From'], [recipient], msg.as_string())
+        _graph_send(to=[recipient], subject=subject, html=html, plain=plain)
         logger.info('otp_email_sent', recipient=recipient)
         return True
     except Exception:
@@ -194,9 +219,7 @@ def send_otp(recipient: str, full_name: str, code: str) -> bool:
 
 
 def send_password_reset(recipient: str, full_name: str, reset_url: str) -> bool:
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
+    if not _graph_configured():
         logger.info('email_skipped_no_credentials', action='password_reset')
         return True
 
@@ -235,22 +258,8 @@ def send_password_reset(recipient: str, full_name: str, reset_url: str) -> bool:
         "This link expires in 1 hour.\n\nIf you didn't request this, ignore this email."
     )
 
-    msg = MIMEMultipart('alternative')
-    msg['From']    = current_app.config.get('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    msg['To']      = recipient
-    msg['Subject'] = subject
-    msg.attach(MIMEText(plain, 'plain'))
-    msg.attach(MIMEText(html, 'html'))
-
     try:
-        host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-        port    = int(current_app.config.get('SMTP_PORT', 587))
-        use_tls = current_app.config.get('SMTP_USE_TLS', True)
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
-            smtp.login(username, password)
-            smtp.sendmail(msg['From'], [recipient], msg.as_string())
+        _graph_send(to=[recipient], subject=subject, html=html, plain=plain)
         logger.info('password_reset_email_sent', recipient=recipient)
         return True
     except Exception:
@@ -289,10 +298,7 @@ def send_confirmation(
     recipient_name: str,
     ticket_ref: str | None = None,
 ) -> bool:
-    """Send a confirmation email to the user who submitted a form."""
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
+    if not _graph_configured():
         logger.info('email_skipped_no_credentials', action='confirmation', ticket_type=ticket_type)
         return True
 
@@ -346,22 +352,8 @@ def send_confirmation(
         "— Internet Assist"
     )
 
-    msg = MIMEMultipart('alternative')
-    msg['From']    = current_app.config.get('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    msg['To']      = recipient_email
-    msg['Subject'] = cfg['subject']
-    msg.attach(MIMEText(plain, 'plain'))
-    msg.attach(MIMEText(html, 'html'))
-
     try:
-        host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-        port    = int(current_app.config.get('SMTP_PORT', 587))
-        use_tls = current_app.config.get('SMTP_USE_TLS', True)
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
-            smtp.login(username, password)
-            smtp.sendmail(msg['From'], [recipient_email], msg.as_string())
+        _graph_send(to=[recipient_email], subject=cfg['subject'], html=html, plain=plain)
         logger.info('confirmation_email_sent', recipient=recipient_email, ticket_type=ticket_type, ticket_ref=ticket_ref)
         return True
     except Exception:
@@ -400,23 +392,20 @@ def send_job_status_update(
     position: str,
     new_status: str,
 ) -> bool:
-    """Send a status-change notification email to a job applicant."""
     cfg = _STATUS_UPDATE_CONFIG.get(new_status)
     if not cfg:
         return True  # no email for 'new' or unknown statuses
 
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
+    if not _graph_configured():
         logger.info('email_skipped_no_credentials', action='job_status_update', status=new_status)
         return True
 
-    first     = escape(recipient_name.split()[0] if recipient_name else 'there')
-    colour    = cfg['colour']
-    heading   = escape(cfg['heading'])
-    intro     = cfg['intro'].format(position=escape(position))
-    body      = cfg['body']
-    subject   = cfg['subject']
+    first   = escape(recipient_name.split()[0] if recipient_name else 'there')
+    colour  = cfg['colour']
+    heading = escape(cfg['heading'])
+    intro   = cfg['intro'].format(position=escape(position))
+    body    = cfg['body']
+    subject = cfg['subject']
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
@@ -456,22 +445,8 @@ def send_job_status_update(
         "— Internet Assist"
     )
 
-    msg = MIMEMultipart('alternative')
-    msg['From']    = current_app.config.get('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    msg['To']      = recipient_email
-    msg['Subject'] = subject
-    msg.attach(MIMEText(plain, 'plain'))
-    msg.attach(MIMEText(html, 'html'))
-
     try:
-        host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-        port    = int(current_app.config.get('SMTP_PORT', 587))
-        use_tls = current_app.config.get('SMTP_USE_TLS', True)
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
-            smtp.login(username, password)
-            smtp.sendmail(msg['From'], [recipient_email], msg.as_string())
+        _graph_send(to=[recipient_email], subject=subject, html=html, plain=plain)
         logger.info('job_status_email_sent', recipient=recipient_email, status=new_status, position=position)
         return True
     except Exception:
@@ -485,28 +460,22 @@ def send_ticket(ticket_type: str, ticket_id: str, fields: dict, user_email: str 
         logger.info('email_skipped_no_recipients', ticket_type=ticket_type, ticket_id=ticket_id)
         return True
 
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
+    if not _graph_configured():
         logger.info('email_skipped_no_credentials', ticket_type=ticket_type)
         return True
 
     label   = _TICKET_LABELS.get(ticket_type, 'New Request')
     short   = ticket_id[:8].upper()
     subject = f'[#{short}] New {label} — Internet Assist'
-    html    = _build_html(ticket_type, ticket_id, fields)
-    plain   = _build_plain(ticket_type, ticket_id, fields)
-    msg     = _make_base_msg(subject, recipients, user_email, plain, html)
 
     try:
-        host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-        port    = int(current_app.config.get('SMTP_PORT', 587))
-        use_tls = current_app.config.get('SMTP_USE_TLS', True)
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
-            smtp.login(username, password)
-            smtp.sendmail(msg['From'], recipients, msg.as_string())
+        _graph_send(
+            to=recipients,
+            subject=subject,
+            html=_build_html(ticket_type, ticket_id, fields),
+            plain=_build_plain(ticket_type, ticket_id, fields),
+            reply_to=user_email,
+        )
         logger.info('email_sent', subject=subject, recipients=recipients)
         return True
     except Exception:
@@ -526,9 +495,7 @@ def send_ticket_with_attachments(
         logger.info('email_skipped_no_recipients', ticket_type=ticket_type, ticket_id=ticket_id)
         return True
 
-    username = current_app.config.get('SMTP_USERNAME', '')
-    password = current_app.config.get('SMTP_PASSWORD', '')
-    if not username or not password:
+    if not _graph_configured():
         logger.info('email_skipped_no_credentials', ticket_type=ticket_type)
         return True
 
@@ -536,43 +503,30 @@ def send_ticket_with_attachments(
     short   = ticket_id[:8].upper()
     subject = f'[#{short}] New {label} — Internet Assist'
 
-    msg = EmailMessage()
-    msg['From']    = current_app.config.get('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    msg['To']      = ', '.join(recipients)
-    msg['Subject'] = subject
-    if user_email:
-        msg['Reply-To'] = user_email
-    msg.set_content(_build_plain(ticket_type, ticket_id, fields))
-    msg.add_alternative(_build_html(ticket_type, ticket_id, fields), subtype='html')
-
+    graph_attachments: list[tuple[bytes, str]] = []
     if attachments:
         for item in attachments:
             try:
                 if isinstance(item, tuple):
-                    data, filename = item
-                    ctype, _ = mimetypes.guess_type(filename)
-                    maintype, subtype = (ctype or 'application/octet-stream').split('/', 1)
-                    msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=filename)
+                    graph_attachments.append(item)
                 else:
                     p = Path(item)
                     if not p.exists():
                         logger.warning('attachment_missing', path=item)
                         continue
-                    ctype, _ = mimetypes.guess_type(str(p))
-                    maintype, subtype = (ctype or 'application/octet-stream').split('/', 1)
-                    msg.add_attachment(p.read_bytes(), maintype=maintype, subtype=subtype, filename=p.name)
+                    graph_attachments.append((p.read_bytes(), p.name))
             except Exception:
                 logger.exception('attachment_add_failed', item=str(item))
 
     try:
-        host    = current_app.config.get('SMTP_HOST', 'smtp.gmail.com')
-        port    = int(current_app.config.get('SMTP_PORT', 587))
-        use_tls = current_app.config.get('SMTP_USE_TLS', True)
-        with smtplib.SMTP(host, port, timeout=15) as smtp:
-            if use_tls:
-                smtp.starttls()
-            smtp.login(username, password)
-            smtp.send_message(msg)
+        _graph_send(
+            to=recipients,
+            subject=subject,
+            html=_build_html(ticket_type, ticket_id, fields),
+            plain=_build_plain(ticket_type, ticket_id, fields),
+            reply_to=user_email,
+            attachments=graph_attachments or None,
+        )
         logger.info('email_sent', subject=subject, recipients=recipients)
         return True
     except Exception:

@@ -114,12 +114,10 @@ az webapp config appsettings set \
     INITIAL_ADMIN_PASSWORD="${INITIAL_ADMIN_PASSWORD:-ChangeMe123!}" \
     PUBLIC_CONTACT_EMAIL="${PUBLIC_CONTACT_EMAIL:-enquiries@internetassist.co.uk}" \
     PUBLIC_CONTACT_PHONE="${PUBLIC_CONTACT_PHONE:-01621 840014}" \
-    SMTP_HOST="${SMTP_HOST:-smtp.gmail.com}" \
-    SMTP_PORT="${SMTP_PORT:-587}" \
-    SMTP_USERNAME="${SMTP_USERNAME:-}" \
-    SMTP_PASSWORD="${SMTP_PASSWORD:-}" \
-    SMTP_USE_TLS="${SMTP_USE_TLS:-true}" \
-    EMAIL_FROM="${EMAIL_FROM:-Internet Assist <no-reply@internetassist.co.uk>}" \
+    GRAPH_TENANT_ID="${GRAPH_TENANT_ID:-}" \
+    GRAPH_CLIENT_ID="${GRAPH_CLIENT_ID:-}" \
+    GRAPH_CLIENT_SECRET="${GRAPH_CLIENT_SECRET:-}" \
+    GRAPH_SENDER="${GRAPH_SENDER:-}" \
     NOTIFY_EMAIL_1="${NOTIFY_EMAIL_1:-}" \
     NOTIFY_EMAIL_2="${NOTIFY_EMAIL_2:-}" \
     TICKET_API_URL="${TICKET_API_URL:-}" \

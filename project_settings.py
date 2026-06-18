@@ -47,14 +47,12 @@ class BaseConfig:
     JSON_SORT_KEYS = False
     APPINSIGHTS_CONNECTION_STRING = os.getenv('APPINSIGHTS_CONNECTION_STRING', '')
 
-    SMTP_HOST     = os.getenv('SMTP_HOST', 'smtp.gmail.com')
-    SMTP_PORT     = int(os.getenv('SMTP_PORT', '587'))
-    SMTP_USERNAME = os.getenv('SMTP_USERNAME', '')
-    SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
-    SMTP_USE_TLS  = os.getenv('SMTP_USE_TLS', 'true').lower() == 'true'
-    EMAIL_FROM    = os.getenv('EMAIL_FROM', 'Internet Assist <no-reply@internetassist.co.uk>')
-    NOTIFY_EMAIL_1 = os.getenv('NOTIFY_EMAIL_1', '')
-    NOTIFY_EMAIL_2 = os.getenv('NOTIFY_EMAIL_2', '')
+    GRAPH_TENANT_ID     = os.getenv('GRAPH_TENANT_ID', '')
+    GRAPH_CLIENT_ID     = os.getenv('GRAPH_CLIENT_ID', '')
+    GRAPH_CLIENT_SECRET = os.getenv('GRAPH_CLIENT_SECRET', '')
+    GRAPH_SENDER        = os.getenv('GRAPH_SENDER', '')
+    NOTIFY_EMAIL_1      = os.getenv('NOTIFY_EMAIL_1', '')
+    NOTIFY_EMAIL_2      = os.getenv('NOTIFY_EMAIL_2', '')
 
     AI_PROVIDER   = os.getenv('AI_PROVIDER', 'gemini')
     AI_MODEL_NAME = os.getenv('AI_MODEL_NAME', 'gemini-flash-latest')
