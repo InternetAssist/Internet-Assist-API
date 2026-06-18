@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 
@@ -64,7 +65,7 @@ class BaseConfig:
 
     FRONTEND_URL         = os.getenv('FRONTEND_URL', 'http://localhost:8081')
     UPLOAD_FOLDER        = str(Path('/tmp') / 'internet-assist-uploads')
-    MEDIA_UPLOAD_DIR     = os.getenv('MEDIA_UPLOAD_DIR', str(Path('/tmp') / 'ia-media'))
+    MEDIA_UPLOAD_DIR     = os.getenv('MEDIA_UPLOAD_DIR', str(Path(tempfile.gettempdir()) / 'ia-media'))
     MEDIA_ENCRYPTION_KEY = os.getenv('MEDIA_ENCRYPTION_KEY', '')
     PUBLIC_CONTACT_EMAIL = os.getenv('PUBLIC_CONTACT_EMAIL', 'enquiries@internetassist.co.uk')
     PUBLIC_CONTACT_PHONE = os.getenv('PUBLIC_CONTACT_PHONE', '01621 840014')

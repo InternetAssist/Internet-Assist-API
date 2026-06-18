@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 import secrets
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 from flask import current_app
+
+log = logging.getLogger(__name__)
 
 _ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
 _CONTENT_TYPES = {
@@ -32,8 +35,13 @@ def _fernet() -> Fernet:
 
 
 def _media_dir() -> Path:
-    d = Path(current_app.config.get('MEDIA_UPLOAD_DIR', '/tmp/ia-media'))
-    d.mkdir(parents=True, exist_ok=True)
+    raw = current_app.config.get('MEDIA_UPLOAD_DIR', '')
+    d = Path(raw) if raw else Path(__file__).parent.parent.parent / 'media'
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.error('Cannot create MEDIA_UPLOAD_DIR %s: %s', d, exc)
+        raise
     return d
 
 

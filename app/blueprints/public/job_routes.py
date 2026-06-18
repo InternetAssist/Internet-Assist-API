@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from flask import request
+
+log = logging.getLogger(__name__)
 from flask_smorest import Blueprint
 from werkzeug.utils import secure_filename
 
@@ -34,8 +37,9 @@ def create_job(payload):
         cv_original_name = secure_filename(upload.filename)
         try:
             cv_file_name = save_document(upload.read(), ext)
-        except Exception:
-            cv_file_name = None  # proceed without CV storage if encryption fails
+        except Exception as exc:
+            log.error('CV save failed for applicant %s: %s', payload.get('email'), exc, exc_info=True)
+            cv_file_name = None
 
     application = JobApplication(
         full_name=payload['full_name'],
