@@ -99,6 +99,7 @@ def create_app() -> Flask:
     from app.blueprints.public.remote_support_routes import blp as remote_support_blp
     from app.blueprints.admin.routes import blp as admin_blp
     from app.blueprints.health.routes import blp as health_blp
+    from app.blueprints.settings.routes import blp as settings_blp
 
     api.register_blueprint(analytics_blp)
     api.register_blueprint(chat_blp)
@@ -110,6 +111,7 @@ def create_app() -> Flask:
     api.register_blueprint(admin_blp)
     app.register_blueprint(health_blp)
     app.register_blueprint(media_blp)
+    app.register_blueprint(settings_blp)
 
     @app.cli.command('seed')
     def seed_command():
