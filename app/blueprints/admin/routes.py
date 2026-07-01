@@ -671,7 +671,13 @@ def get_audit_log(log_id):
 
 def _project_image_url(p: Project) -> str | None:
     if p.image_file_id:
-        return f"{request.host_url.rstrip('/')}/media/projects/{p.image_file_id}"
+        # IIS's HttpPlatformHandler proxies to waitress over plain HTTP and doesn't
+        # set X-Forwarded-Proto, so request.host_url reports http even when the
+        # public site is HTTPS-only. Force the scheme in production instead of
+        # trusting proxy headers that aren't actually being sent.
+        host = request.host_url.split('://', 1)[-1].rstrip('/')
+        scheme = 'https' if current_app.config.get('APP_ENV') == 'production' else request.scheme
+        return f"{scheme}://{host}/media/projects/{p.image_file_id}"
     return p.image_url or None
 
 
@@ -686,6 +692,7 @@ def _serialize_project(p: Project) -> dict:
         'solution':      p.solution,
         'outcome':       p.outcome,
         'tags':          p.tags or [],
+        'service_type':  p.service_type,
         'image_url':     _project_image_url(p),
         'image_file_id': p.image_file_id,
         'project_url':   p.project_url,
@@ -725,6 +732,7 @@ def create_project(payload):
         solution=payload.get('solution'),
         outcome=payload.get('outcome'),
         tags=payload.get('tags') or [],
+        service_type=payload['service_type'],
         image_url=payload.get('image_url'),
         project_url=payload.get('project_url'),
         status=payload.get('status') or 'draft',
@@ -746,7 +754,7 @@ def patch_project(payload, project_id):
     # ProjectPatchSchema uses load_default=None so every field appears in payload;
     # we use the raw JSON keys to tell which ones were explicitly sent.
     sent_keys = set((request.get_json(silent=True) or {}).keys())
-    for field in ('title', 'client', 'industry', 'summary', 'challenge', 'solution', 'outcome', 'tags', 'image_url', 'project_url', 'status'):
+    for field in ('title', 'client', 'industry', 'summary', 'challenge', 'solution', 'outcome', 'tags', 'service_type', 'image_url', 'project_url', 'status'):
         if field in sent_keys:
             setattr(proj, field, payload.get(field))
     db.session.commit()

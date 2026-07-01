@@ -5,6 +5,17 @@ from uuid import uuid4
 from app.models.base import BaseModel
 from app.extensions import db
 
+SERVICE_TYPES = (
+    'it-support',
+    'cloud-services',
+    'cyber-security',
+    'backup-recovery',
+    'communications',
+    'infrastructure',
+    'software-development',
+    'web-design',
+)
+
 
 class Project(BaseModel):
     __tablename__ = 'projects'
@@ -18,6 +29,7 @@ class Project(BaseModel):
     solution   = db.Column(db.Text, nullable=True)
     outcome    = db.Column(db.Text, nullable=True)
     tags       = db.Column(db.JSON, nullable=True)
+    service_type = db.Column(db.String(50), nullable=True, index=True)
     image_url   = db.Column(db.String(1024), nullable=True)
     project_url = db.Column(db.String(1024), nullable=True)
     status        = db.Column(db.String(30),  nullable=False, default='draft', index=True)

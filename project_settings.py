@@ -24,7 +24,7 @@ class BaseConfig:
     JWT_PUBLIC_KEY = os.getenv('JWT_PUBLIC_KEY', '')
     JWT_ALGORITHM = 'RS256' if JWT_PRIVATE_KEY and JWT_PUBLIC_KEY else 'HS256'
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', SECRET_KEY)
-    JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=8)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
 
     # Cookie-based JWT settings (httpOnly, SameSite=Lax by default)

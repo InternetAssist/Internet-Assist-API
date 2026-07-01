@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from marshmallow import EXCLUDE, Schema, fields, validate
 
+from app.models.project import SERVICE_TYPES
+
 from .base import BaseSchema
 
 
@@ -51,6 +53,7 @@ class ProjectCreateSchema(BaseSchema):
     solution  = fields.String(load_default=None, allow_none=True)
     outcome   = fields.String(load_default=None, allow_none=True)
     tags        = fields.List(fields.String(), load_default=list)
+    service_type = fields.String(required=True, validate=validate.OneOf(SERVICE_TYPES))
     image_url   = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=1024))
     project_url = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=1024))
     status      = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(['draft', 'published']))
@@ -70,6 +73,7 @@ class ProjectPatchSchema(Schema):
     solution  = fields.String(load_default=None, allow_none=True)
     outcome   = fields.String(load_default=None, allow_none=True)
     tags        = fields.List(fields.String(), load_default=None, allow_none=True)
+    service_type = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(SERVICE_TYPES))
     image_url   = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=1024))
     project_url = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=1024))
     status      = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(['draft', 'published']))
