@@ -7,6 +7,7 @@ from flask import Blueprint, Response, g, request, stream_with_context
 
 from app.extensions import db
 from app.models.site_setting import SiteSetting
+from app.services import ai_config_service
 from app.services.audit_service import log_audit_action
 from app.services.sse_broadcast import broadcast, subscribe, unsubscribe
 from app.utils.decorators import roles_required
@@ -107,3 +108,45 @@ def patch_season():
         ip=request.remote_addr,
     )
     return envelope(data=new_value, status=200)
+
+
+# ── Admin: AI (Gemini) API key ─────────────────────────────────────────────────
+# The key is never returned to the browser once saved — only whether one is set.
+
+@blp.route('/admin/settings/ai', methods=['GET'])
+@roles_required('admin')
+def admin_get_ai_settings():
+    return envelope(data={'configured': ai_config_service.is_configured()}, status=200)
+
+
+@blp.route('/admin/settings/ai', methods=['PATCH'])
+@roles_required('admin')
+def patch_ai_settings():
+    payload = request.get_json(silent=True) or {}
+    api_key = (payload.get('api_key') or '').strip()
+    if not api_key:
+        return envelope(error={'code': 'invalid', 'message': 'api_key is required', 'details': None}, status=422)
+
+    ai_config_service.set_api_key(api_key)
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_update_ai_key',
+        entity='site_setting',
+        entity_id='ai_config',
+        ip=request.remote_addr,
+    )
+    return envelope(data={'configured': True}, status=200)
+
+
+@blp.route('/admin/settings/ai', methods=['DELETE'])
+@roles_required('admin')
+def delete_ai_settings():
+    ai_config_service.clear_api_key()
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_clear_ai_key',
+        entity='site_setting',
+        entity_id='ai_config',
+        ip=request.remote_addr,
+    )
+    return envelope(data={'configured': False}, status=200)

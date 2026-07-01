@@ -8,6 +8,7 @@ from app.extensions import db
 from app.logging import logger
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
+from app.services import ai_config_service
 from app.services.audit_service import log_audit_action
 from app.services.ticket_service import create_ticket
 
@@ -215,7 +216,7 @@ def process_message(
             message,
             history=history,
             model_name=current_app.config['AI_MODEL_NAME'],
-            api_key=current_app.config['AI_API_KEY'],
+            api_key=ai_config_service.resolve_api_key(),
         )
         reply = result.get('reply', '')
         ai_action = result.get('action')
