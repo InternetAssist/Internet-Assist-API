@@ -150,3 +150,54 @@ def delete_ai_settings():
         ip=request.remote_addr,
     )
     return envelope(data={'configured': False}, status=200)
+
+
+# ── Chatbot widget on/off ───────────────────────────────────────────────────────
+# Defaults to disabled — it's still under development and shouldn't appear for
+# real visitors until explicitly turned on from Admin.
+
+_CHATBOT_KEY = 'chatbot'
+_DEFAULT_CHATBOT: dict = {'enabled': False}
+
+
+def _current_chatbot() -> dict:
+    try:
+        result = SiteSetting.get(_CHATBOT_KEY, _DEFAULT_CHATBOT)
+        return result if result is not None else _DEFAULT_CHATBOT
+    except Exception:
+        db.session.rollback()
+        return _DEFAULT_CHATBOT
+
+
+@blp.route('/settings/chatbot')
+def get_chatbot_settings():
+    return envelope(data=_current_chatbot(), status=200)
+
+
+@blp.route('/admin/settings/chatbot', methods=['GET'])
+@roles_required('admin')
+def admin_get_chatbot_settings():
+    return envelope(data=_current_chatbot(), status=200)
+
+
+@blp.route('/admin/settings/chatbot', methods=['PATCH'])
+@roles_required('admin')
+def patch_chatbot_settings():
+    payload = request.get_json(silent=True) or {}
+    enabled = payload.get('enabled')
+    if not isinstance(enabled, bool):
+        return envelope(error={'code': 'invalid', 'message': '`enabled` must be a boolean', 'details': None}, status=422)
+
+    current = _current_chatbot()
+    new_value = {'enabled': enabled}
+    SiteSetting.upsert(_CHATBOT_KEY, new_value)
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_update_chatbot_enabled',
+        entity='site_setting',
+        entity_id=_CHATBOT_KEY,
+        diff={'old': current, 'new': new_value},
+        ip=request.remote_addr,
+    )
+    return envelope(data=new_value, status=200)
