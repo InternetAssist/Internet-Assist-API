@@ -7,6 +7,7 @@ from app.extensions import db, limiter
 from app.models.contact import Contact
 from app.schemas.public import ContactCreateSchema
 from app.services.audit_service import log_audit_action
+from app.services.email_service import send_ticket
 from app.services.ticket_service import create_ticket
 from app.utils.response import envelope
 
@@ -46,6 +47,22 @@ def create_contact(payload):
         contact.ticket_id  = ticket['ticket_id']
         contact.ticket_ref = ticket['ticket_ref']
         db.session.commit()
+
+    try:
+        send_ticket(
+            ticket_type='contact',
+            ticket_id=contact.id,
+            fields={
+                'Name':    contact.name,
+                'Email':   contact.email,
+                'Phone':   contact.phone,
+                'Company': contact.company,
+                'Message': contact.message,
+            },
+            user_email=contact.email,
+        )
+    except Exception:
+        pass
 
     log_audit_action(action='public_contact_created', entity='contact', entity_id=contact.id, ip=request.remote_addr)
     return envelope(data={'id': contact.id, 'status': contact.status, 'ticket_ref': contact.ticket_ref}, status=201)

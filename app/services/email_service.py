@@ -9,6 +9,7 @@ import requests
 from flask import current_app
 
 from app.logging import logger
+from app.services import file_settings
 
 _TICKET_COLOURS = {
     'contact':         '#2563eb',
@@ -359,6 +360,10 @@ def send_job_status_update(
 
 
 def send_ticket(ticket_type: str, ticket_id: str, fields: dict, user_email: str | None = None) -> bool:
+    if not file_settings.get('enquiry_forwarding').get('enabled', True):
+        logger.info('email_skipped_forwarding_disabled', ticket_type=ticket_type, ticket_id=ticket_id)
+        return True
+
     recipients = _recipients()
     if not recipients:
         logger.info('email_skipped_no_recipients', ticket_type=ticket_type, ticket_id=ticket_id)
@@ -394,6 +399,10 @@ def send_ticket_with_attachments(
     user_email: str | None = None,
     attachments: list[str | tuple[bytes, str]] | None = None,
 ) -> bool:
+    if not file_settings.get('enquiry_forwarding').get('enabled', True):
+        logger.info('email_skipped_forwarding_disabled', ticket_type=ticket_type, ticket_id=ticket_id)
+        return True
+
     recipients = _recipients()
     if not recipients:
         logger.info('email_skipped_no_recipients', ticket_type=ticket_type, ticket_id=ticket_id)

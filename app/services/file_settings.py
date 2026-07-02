@@ -14,6 +14,7 @@ _lock = threading.Lock()
 _DEFAULTS: dict = {
     'season': {'enabled': True, 'override': 'auto'},
     'chatbot': {'enabled': False},
+    'enquiry_forwarding': {'enabled': True},
 }
 
 
