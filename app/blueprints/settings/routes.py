@@ -2,14 +2,98 @@ from __future__ import annotations
 
 from flask import Blueprint, g, request
 
-from app.extensions import db
-from app.models.site_setting import SiteSetting
-from app.services import ai_config_service
+from app.services import ai_config_service, file_settings
 from app.services.audit_service import log_audit_action
 from app.utils.decorators import roles_required
 from app.utils.response import envelope
 
 blp = Blueprint('settings', __name__)
+
+_VALID_OVERRIDES = {'auto', 'winter', 'spring', 'summer', 'autumn', 'off'}
+
+
+# ── Season ambience — stored in a flat JSON file, not the DB ──────────────────
+# Decorative and rarely changed, so it doesn't need a DB row or a live SSE
+# push. Clients cache the value locally and only re-check occasionally.
+
+@blp.route('/settings/season')
+def get_season():
+    return envelope(data=file_settings.get('season'), status=200)
+
+
+@blp.route('/admin/settings/season', methods=['GET'])
+@roles_required('admin')
+def admin_get_season():
+    return envelope(data=file_settings.get('season'), status=200)
+
+
+@blp.route('/admin/settings/season', methods=['PATCH'])
+@roles_required('admin')
+def patch_season():
+    payload = request.get_json(silent=True) or {}
+    current = file_settings.get('season')
+
+    enabled  = payload.get('enabled',  current.get('enabled',  True))
+    override = payload.get('override', current.get('override', 'auto'))
+
+    if not isinstance(enabled, bool):
+        return envelope(error={'code': 'invalid', 'message': '`enabled` must be a boolean', 'details': None}, status=422)
+    if override not in _VALID_OVERRIDES:
+        return envelope(
+            error={'code': 'invalid', 'message': f'`override` must be one of {sorted(_VALID_OVERRIDES)}', 'details': None},
+            status=422,
+        )
+
+    new_value = {'enabled': enabled, 'override': override}
+    file_settings.set('season', new_value)
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_update_season',
+        entity='site_setting',
+        entity_id='season',
+        diff={'old': current, 'new': new_value},
+        ip=request.remote_addr,
+    )
+    return envelope(data=new_value, status=200)
+
+
+# ── Chatbot widget on/off — same flat-file approach as season ─────────────────
+# Defaults to disabled — it's still under development and shouldn't appear for
+# real visitors until explicitly turned on from Admin.
+
+@blp.route('/settings/chatbot')
+def get_chatbot_settings():
+    return envelope(data=file_settings.get('chatbot'), status=200)
+
+
+@blp.route('/admin/settings/chatbot', methods=['GET'])
+@roles_required('admin')
+def admin_get_chatbot_settings():
+    return envelope(data=file_settings.get('chatbot'), status=200)
+
+
+@blp.route('/admin/settings/chatbot', methods=['PATCH'])
+@roles_required('admin')
+def patch_chatbot_settings():
+    payload = request.get_json(silent=True) or {}
+    enabled = payload.get('enabled')
+    if not isinstance(enabled, bool):
+        return envelope(error={'code': 'invalid', 'message': '`enabled` must be a boolean', 'details': None}, status=422)
+
+    current = file_settings.get('chatbot')
+    new_value = {'enabled': enabled}
+    file_settings.set('chatbot', new_value)
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_update_chatbot_enabled',
+        entity='site_setting',
+        entity_id='chatbot',
+        diff={'old': current, 'new': new_value},
+        ip=request.remote_addr,
+    )
+    return envelope(data=new_value, status=200)
 
 
 # ── Admin: AI (Gemini) API key ─────────────────────────────────────────────────
@@ -52,54 +136,3 @@ def delete_ai_settings():
         ip=request.remote_addr,
     )
     return envelope(data={'configured': False}, status=200)
-
-
-# ── Chatbot widget on/off ───────────────────────────────────────────────────────
-# Defaults to disabled — it's still under development and shouldn't appear for
-# real visitors until explicitly turned on from Admin.
-
-_CHATBOT_KEY = 'chatbot'
-_DEFAULT_CHATBOT: dict = {'enabled': False}
-
-
-def _current_chatbot() -> dict:
-    try:
-        result = SiteSetting.get(_CHATBOT_KEY, _DEFAULT_CHATBOT)
-        return result if result is not None else _DEFAULT_CHATBOT
-    except Exception:
-        db.session.rollback()
-        return _DEFAULT_CHATBOT
-
-
-@blp.route('/settings/chatbot')
-def get_chatbot_settings():
-    return envelope(data=_current_chatbot(), status=200)
-
-
-@blp.route('/admin/settings/chatbot', methods=['GET'])
-@roles_required('admin')
-def admin_get_chatbot_settings():
-    return envelope(data=_current_chatbot(), status=200)
-
-
-@blp.route('/admin/settings/chatbot', methods=['PATCH'])
-@roles_required('admin')
-def patch_chatbot_settings():
-    payload = request.get_json(silent=True) or {}
-    enabled = payload.get('enabled')
-    if not isinstance(enabled, bool):
-        return envelope(error={'code': 'invalid', 'message': '`enabled` must be a boolean', 'details': None}, status=422)
-
-    current = _current_chatbot()
-    new_value = {'enabled': enabled}
-    SiteSetting.upsert(_CHATBOT_KEY, new_value)
-
-    log_audit_action(
-        actor_user_id=g.current_user.id,
-        action='admin_update_chatbot_enabled',
-        entity='site_setting',
-        entity_id=_CHATBOT_KEY,
-        diff={'old': current, 'new': new_value},
-        ip=request.remote_addr,
-    )
-    return envelope(data=new_value, status=200)
