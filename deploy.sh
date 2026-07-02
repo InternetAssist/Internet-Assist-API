@@ -106,7 +106,7 @@ az webapp config appsettings set \
     DATABASE_URL="$DATABASE_URL" \
     SECRET_KEY="$SECRET_KEY" \
     JWT_SECRET_KEY="$JWT_SECRET_KEY" \
-    CORS_ORIGINS="${CORS_ORIGINS:-https://${APP_NAME}.azurewebsites.net,https://internet-assist.lovable.app}" \
+    CORS_ORIGINS="${CORS_ORIGINS:-https://${APP_NAME}.azurewebsites.net}" \
     AI_PROVIDER="${AI_PROVIDER:-gemini}" \
     AI_MODEL_NAME="${AI_MODEL_NAME:-gemini-flash-latest}" \
     AI_API_KEY="$AI_API_KEY" \
