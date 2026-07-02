@@ -10,7 +10,6 @@ class ChatSession(db.Model):
     __tablename__ = 'chat_sessions'
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: uuid4().hex)
-    user_id = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     started_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     last_activity_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
@@ -20,7 +19,6 @@ class ChatSession(db.Model):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-    user = db.relationship('User')
     messages = db.relationship(
         'ChatMessage',
         back_populates='session',

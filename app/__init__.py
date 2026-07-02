@@ -5,7 +5,6 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-import click
 from flask import Flask, g, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -72,13 +71,6 @@ def create_app() -> Flask:
     def _identity_loader(user):
         return user.id if hasattr(user, 'id') else user
 
-    @jwt.user_lookup_loader
-    def _lookup_user(_jwt_header, jwt_data):
-        from app.extensions import db
-        from app.models.user import User
-
-        return db.session.get(User, jwt_data['sub'])
-
     @jwt.token_in_blocklist_loader
     def _check_blocklist(_jwt_header, jwt_data):
         from app.models.token_blacklist import TokenBlacklist
@@ -110,12 +102,5 @@ def create_app() -> Flask:
     app.register_blueprint(health_blp)
     app.register_blueprint(media_blp)
     app.register_blueprint(settings_blp)
-
-    @app.cli.command('seed')
-    def seed_command():
-        """Create tables and seed roles + admin user."""
-        from app.services.seeder import run_seed
-        run_seed()
-        click.echo('Database seeded successfully.')
 
     return app

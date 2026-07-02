@@ -16,7 +16,6 @@ class Contact(db.Model):
     company = db.Column(db.String(255), nullable=True)
     message = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(30), default='new', nullable=False, index=True)
-    assigned_to = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     internal_notes = db.Column(db.Text, nullable=True)
     ip = db.Column(db.String(64), nullable=True)
     user_agent = db.Column(db.String(255), nullable=True)

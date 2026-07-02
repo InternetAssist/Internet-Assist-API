@@ -19,7 +19,6 @@ class JobApplication(db.Model):
     status = db.Column(db.String(30), default='new', nullable=False, index=True)
     ticket_id = db.Column(db.String(36), nullable=True)
     ticket_ref = db.Column(db.String(20), nullable=True)
-    assigned_to = db.Column(db.String(36), db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = db.Column(
         db.DateTime(timezone=True),
