@@ -59,9 +59,21 @@ class BaseConfig:
     AI_MODEL_NAME = os.getenv('AI_MODEL_NAME', 'gemini-flash-latest')
     AI_API_KEY    = os.getenv('AI_API_KEY', '')
 
-    INITIAL_ADMIN_EMAIL    = os.getenv('INITIAL_ADMIN_EMAIL', 'admin@internetassist.co.uk')
-    INITIAL_ADMIN_PASSWORD = os.getenv('INITIAL_ADMIN_PASSWORD', 'ChangeMe123!')
-    AUTO_SEED_ADMIN        = os.getenv('AUTO_SEED_ADMIN', 'false').lower() == 'true'
+    # "Sign in with Microsoft" admin login — reuses the same Azure AD app
+    # registration as GRAPH_* above (already used for sending email) unless
+    # overridden. Access is gated on holding the ia-support-admin App Role on
+    # that app's service principal — see app/services/ms_auth_service.py.
+    MS_AUTH_TENANT_ID     = os.getenv('MS_AUTH_TENANT_ID', GRAPH_TENANT_ID)
+    MS_AUTH_CLIENT_ID     = os.getenv('MS_AUTH_CLIENT_ID', GRAPH_CLIENT_ID)
+    MS_AUTH_CLIENT_SECRET = os.getenv('MS_AUTH_CLIENT_SECRET', GRAPH_CLIENT_SECRET)
+    MS_AUTH_SP_ID         = os.getenv('MS_AUTH_SP_ID', 'cdac666d-40b4-4103-bb24-094e6aee55c7')
+    MS_AUTH_ADMIN_ROLE_ID = os.getenv('MS_AUTH_ADMIN_ROLE_ID', '0b6bc22f-8ead-4b2e-8392-6ab2e8a003d3')
+    MS_AUTH_AUTHORITY     = f'https://login.microsoftonline.com/{MS_AUTH_TENANT_ID}'
+
+    # Session cookie carries the msal OAuth flow's state/nonce/PKCE verifier
+    # across the redirect to Microsoft and back — Lax (not Strict) is required
+    # for the cookie to survive that top-level cross-site redirect.
+    SESSION_COOKIE_SAMESITE = 'Lax'
 
     FRONTEND_URL         = os.getenv('FRONTEND_URL', 'http://localhost:8081')
     UPLOAD_FOLDER        = str(Path('/tmp') / 'internet-assist-uploads')
@@ -98,7 +110,6 @@ class ProductionConfig(BaseConfig):
     SQLALCHEMY_DATABASE_URI = BaseConfig.database_url()
     SESSION_COOKIE_SECURE   = True
     SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SAMESITE = 'Lax'
     # Disable Swagger UI in production — docs endpoint must not be publicly reachable
     OPENAPI_SWAGGER_UI_PATH = None
 

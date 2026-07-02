@@ -87,8 +87,6 @@ def create_app() -> Flask:
             return False
         return TokenBlacklist.is_revoked(jti)
 
-    from app.models.password_reset_token import PasswordResetToken as _PRT  # noqa: F401
-
     from app.blueprints.analytics.routes import blp as analytics_blp
     from app.blueprints.media.routes import blp as media_blp
     from app.blueprints.chat.routes import blp as chat_blp

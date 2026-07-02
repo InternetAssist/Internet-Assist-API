@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from flask import current_app, g, make_response, request
-from flask_jwt_extended import create_access_token, get_jwt, jwt_required, set_access_cookies, unset_jwt_cookies
+from flask import current_app, g, make_response, redirect, request, session, url_for
+from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required, set_access_cookies, unset_jwt_cookies
 from flask_smorest import Blueprint
 from sqlalchemy import func, or_
 
@@ -15,19 +13,18 @@ from app.models.audit_log import AuditLog
 from app.models.contact import Contact
 from app.models.job_application import JobApplication
 from app.models.job_posting import JobPosting
-from app.models.otp_token import OtpToken
-from app.models.password_reset_token import PasswordResetToken
 from app.models.project import Project
 from app.models.quote import Quote
+from app.models.role import Role
 from app.models.user import User
 from app.schemas.admin import (
-    AdminLoginSchema, ForgotPasswordSchema, JobPostingCreateSchema,
+    JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
-    ResetPasswordSchema, VerifyOtpSchema,
 )
 from app.services.audit_service import log_audit_action
-from app.services.email_service import send_otp, send_password_reset, send_job_status_update
+from app.services.email_service import send_job_status_update
 from app.services.media_service import delete_image, save_image, load_document
+from app.services.ms_auth_service import build_auth_flow, complete_auth_flow, has_admin_app_role
 from app.utils.decorators import roles_required
 from app.utils.response import envelope
 
@@ -40,101 +37,78 @@ def _paginate(query, page: int, page_size: int):
     return items, {'page': page, 'page_size': page_size, 'total': total, 'has_more': page * page_size < total}
 
 
-# ── Auth ─────────────────────────────────────────────────────────────────────
+# ── Auth: Sign in with Microsoft ────────────────────────────────────────────
+# Authentication (who is this person) happens via an interactive OAuth flow
+# against Azure AD. Authorization (do they get in) is a separate check against
+# the ia-support-admin App Role on the same app registration, using the
+# app-only Graph credentials already used for sending email — see
+# app/services/ms_auth_service.py. Everything downstream of a successful login
+# (the JWT cookie, roles_required('admin'), audit logging) is unchanged.
 
-_OTP_TTL_MINUTES = 10
-_OTP_MAX_ATTEMPTS = 5
+@blp.route('/admin/login/microsoft', methods=['GET'])
+@limiter.limit('10/minute')
+def login_microsoft():
+    redirect_uri = url_for('admin.microsoft_callback', _external=True)
+    flow = build_auth_flow(redirect_uri)
+    session['ms_flow'] = flow
+    return redirect(flow['auth_uri'])
 
 
-@blp.route('/admin/login', methods=['POST'])
-@blp.arguments(AdminLoginSchema)
-@limiter.limit('5/minute')
-def admin_login(payload):
-    user = User.query.filter(func.lower(User.email) == payload['email'].lower()).first()
-    if not user or not user.is_active or not user.check_password(payload['password']) or not user.has_role('admin'):
+@blp.route('/admin/login/microsoft/callback', methods=['GET'])
+@limiter.limit('10/minute')
+def microsoft_callback():
+    frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:8081')
+    flow = session.pop('ms_flow', None)
+    if not flow:
+        return redirect(f'{frontend_url}/auth?error=session_expired')
+
+    result = complete_auth_flow(flow, request.args)
+    if 'error' in result:
         log_audit_action(
             actor_user_id=None,
             action='admin_login_failed',
             entity='user',
-            diff={'email': payload['email']},
+            diff={'error': result.get('error')},
             ip=request.remote_addr,
         )
-        return envelope(error={'code': 'unauthorized', 'message': 'Invalid credentials', 'details': None}, status=401)
+        return redirect(f'{frontend_url}/auth?error=login_failed')
 
-    # Clear any existing OTP tokens for this user and issue a new one
-    OtpToken.query.filter_by(user_id=user.id).delete()
+    claims = result.get('id_token_claims', {})
+    oid = claims.get('oid')
+    email = (claims.get('email') or claims.get('preferred_username') or '').lower()
+    full_name = claims.get('name') or email
 
-    raw_session = secrets.token_hex(32)
-    raw_otp     = f"{secrets.randbelow(100_000_000):08d}"
-    session_hash = hashlib.sha256(raw_session.encode()).hexdigest()
-    otp_hash     = hashlib.sha256(raw_otp.encode()).hexdigest()
-    expires_at   = datetime.now(timezone.utc) + timedelta(minutes=_OTP_TTL_MINUTES)
+    if not oid or not email:
+        return redirect(f'{frontend_url}/auth?error=login_failed')
 
-    db.session.add(OtpToken(
-        user_id=user.id,
-        session_hash=session_hash,
-        otp_hash=otp_hash,
-        expires_at=expires_at,
-    ))
-    db.session.commit()
+    try:
+        authorized = has_admin_app_role(oid)
+    except Exception:
+        current_app.logger.exception('ms_role_check_failed')
+        return redirect(f'{frontend_url}/auth?error=role_check_failed')
 
-    send_otp(user.email, user.full_name, raw_otp)
-    log_audit_action(
-        actor_user_id=user.id,
-        action='admin_login_otp_sent',
-        entity='user',
-        entity_id=user.id,
-        ip=request.remote_addr,
-    )
-    return envelope(data={'otp_session': raw_session}, status=200)
-
-
-@blp.route('/admin/verify-otp', methods=['POST'])
-@blp.arguments(VerifyOtpSchema)
-@limiter.limit('5/minute')
-def verify_otp(payload):
-    session_hash = hashlib.sha256(payload['session'].encode()).hexdigest()
-    otp_record   = OtpToken.query.filter_by(session_hash=session_hash).first()
-    now          = datetime.now(timezone.utc)
-
-    if not otp_record:
-        return envelope(error={'code': 'invalid_session', 'message': 'Session expired or invalid.', 'details': None}, status=400)
-
-    expires = otp_record.expires_at
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-
-    if expires < now:
-        db.session.delete(otp_record)
-        db.session.commit()
-        return envelope(error={'code': 'otp_expired', 'message': 'Code has expired — please sign in again.', 'details': None}, status=400)
-
-    if otp_record.attempts >= _OTP_MAX_ATTEMPTS:
-        db.session.delete(otp_record)
-        db.session.commit()
-        return envelope(error={'code': 'otp_locked', 'message': 'Too many attempts — please sign in again.', 'details': None}, status=429)
-
-    submitted_hash = hashlib.sha256(payload['code'].encode()).hexdigest()
-    if not secrets.compare_digest(submitted_hash, otp_record.otp_hash):
-        otp_record.attempts += 1
-        db.session.commit()
-        remaining = _OTP_MAX_ATTEMPTS - otp_record.attempts
+    if not authorized:
         log_audit_action(
-            actor_user_id=otp_record.user_id,
-            action='admin_otp_failed',
+            actor_user_id=None,
+            action='admin_login_denied_no_role',
             entity='user',
-            entity_id=otp_record.user_id,
-            diff={'attempts': otp_record.attempts, 'remaining': remaining},
+            diff={'email': email, 'oid': oid},
             ip=request.remote_addr,
         )
-        return envelope(
-            error={'code': 'invalid_otp', 'message': f'Incorrect code. {remaining} attempt{"s" if remaining != 1 else ""} remaining.', 'details': None},
-            status=400,
-        )
+        return redirect(f'{frontend_url}/auth?error=forbidden')
 
-    user = db.session.get(User, otp_record.user_id)
-    db.session.delete(otp_record)
-    user.last_login_at = now
+    user = User.query.filter(func.lower(User.email) == email).first()
+    admin_role = Role.query.filter_by(name='admin').first()
+    if not user:
+        user = User(email=email, full_name=full_name)
+        db.session.add(user)
+    else:
+        user.full_name = full_name
+    if not user.is_active:
+        user.is_active = True
+    if admin_role and admin_role not in user.roles:
+        user.roles.append(admin_role)
+    user.last_login_at = datetime.now(timezone.utc)
     db.session.commit()
 
     token = create_access_token(identity=user.id)
@@ -145,20 +119,23 @@ def verify_otp(payload):
         entity_id=user.id,
         ip=request.remote_addr,
     )
-    resp = make_response(envelope(
-        data={
-            'access_token': token,
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'full_name': user.full_name,
-                'roles': [role.name for role in user.roles],
-            },
-        },
-        status=200,
-    ))
+    resp = make_response(redirect(f'{frontend_url}/admin'))
     set_access_cookies(resp, token)
     return resp
+
+
+@blp.route('/admin/me', methods=['GET'])
+@jwt_required()
+def admin_me():
+    user = db.session.get(User, get_jwt_identity())
+    if not user or not user.is_active:
+        return envelope(error={'code': 'unauthorized', 'message': 'Not signed in', 'details': None}, status=401)
+    return envelope(data={
+        'id': user.id,
+        'email': user.email,
+        'full_name': user.full_name,
+        'roles': [role.name for role in user.roles],
+    }, status=200)
 
 
 @blp.route('/admin/logout', methods=['POST'])
@@ -177,66 +154,6 @@ def admin_logout():
     resp = make_response(envelope(data={'message': 'Logged out successfully.'}, status=200))
     unset_jwt_cookies(resp)
     return resp
-
-
-# ── Forgot / Reset password ───────────────────────────────────────────────────
-
-@blp.route('/admin/forgot-password', methods=['POST'])
-@blp.arguments(ForgotPasswordSchema)
-@limiter.limit('5/minute')
-def forgot_password(payload):
-    email = payload['email'].lower()
-    user = User.query.filter(func.lower(User.email) == email).first()
-    if user and user.is_active and user.has_role('admin'):
-        PasswordResetToken.query.filter_by(user_id=user.id).delete()
-        raw_token = secrets.token_hex(32)
-        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
-        db.session.add(PasswordResetToken(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
-        db.session.commit()
-        frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:8081')
-        reset_url = f"{frontend_url}/reset-password?token={raw_token}"
-        send_password_reset(user.email, user.full_name, reset_url)
-        log_audit_action(actor_user_id=user.id, action='forgot_password_requested', entity='user', entity_id=user.id, ip=request.remote_addr)
-    return envelope(data={'message': 'If that email is registered, a reset link has been sent.'}, status=200)
-
-
-def _check_password_strength(password: str) -> str | None:
-    """Return an error message if password is too weak, else None."""
-    import re as _re
-    if len(password) < 12:
-        return 'Password must be at least 12 characters.'
-    if not _re.search(r'[A-Z]', password):
-        return 'Password must contain at least one uppercase letter.'
-    if not _re.search(r'[a-z]', password):
-        return 'Password must contain at least one lowercase letter.'
-    if not _re.search(r'\d', password):
-        return 'Password must contain at least one number.'
-    if not _re.search(r'[^A-Za-z0-9]', password):
-        return 'Password must contain at least one special character.'
-    return None
-
-
-@blp.route('/admin/reset-password', methods=['POST'])
-@blp.arguments(ResetPasswordSchema)
-@limiter.limit('5/minute')
-def reset_password(payload):
-    token_hash = hashlib.sha256(payload['token'].encode()).hexdigest()
-    prt = PasswordResetToken.query.filter_by(token_hash=token_hash).first()
-    now = datetime.now(timezone.utc)
-    if not prt or prt.expires_at.replace(tzinfo=timezone.utc) < now:
-        return envelope(error={'code': 'invalid_token', 'message': 'Invalid or expired reset link.', 'details': None}, status=400)
-    user = db.session.get(User, prt.user_id)
-    if not user or not user.is_active:
-        return envelope(error={'code': 'invalid_token', 'message': 'Invalid or expired reset link.', 'details': None}, status=400)
-    strength_error = _check_password_strength(payload['password'])
-    if strength_error:
-        return envelope(error={'code': 'weak_password', 'message': strength_error, 'details': None}, status=422)
-    user.set_password(payload['password'])
-    db.session.delete(prt)
-    db.session.commit()
-    log_audit_action(actor_user_id=user.id, action='password_reset_completed', entity='user', entity_id=user.id, ip=request.remote_addr)
-    return envelope(data={'message': 'Password updated. You can now sign in.'}, status=200)
 
 
 # ── Serializers ───────────────────────────────────────────────────────────────

@@ -7,11 +7,6 @@ from app.models.project import SERVICE_TYPES
 from .base import BaseSchema
 
 
-class AdminLoginSchema(BaseSchema):
-    email = fields.Email(required=True)
-    password = fields.String(required=True, validate=validate.Length(min=8, max=256))
-
-
 class PaginationQuerySchema(BaseSchema):
     page = fields.Integer(load_default=1, validate=validate.Range(min=1))
     page_size = fields.Integer(load_default=25, validate=validate.Range(min=1, max=100))
@@ -28,20 +23,6 @@ class StatsResponseSchema(BaseSchema):
 
 class PatchStatusSchema(BaseSchema):
     status = fields.String(required=True, validate=validate.Length(min=1, max=30))
-
-
-class ForgotPasswordSchema(BaseSchema):
-    email = fields.Email(required=True)
-
-
-class ResetPasswordSchema(BaseSchema):
-    token    = fields.String(required=True, validate=validate.Length(min=64, max=64))
-    password = fields.String(required=True, validate=validate.Length(min=8, max=256))
-
-
-class VerifyOtpSchema(BaseSchema):
-    session = fields.String(required=True, validate=validate.Length(min=64, max=64))
-    code    = fields.String(required=True, validate=validate.Regexp(r'^\d{8}$', error='Code must be 8 digits'))
 
 
 class ProjectCreateSchema(BaseSchema):
