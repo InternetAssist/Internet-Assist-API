@@ -27,11 +27,18 @@ class BaseConfig:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=8)
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
 
-    # Cookie-based JWT settings (httpOnly, SameSite=Lax by default)
+    # Cookie-based JWT settings (httpOnly). The frontend is also served from
+    # ia-webdesign.com, a genuinely different registrable domain from
+    # api.ia.uk (not a subdomain of ia.uk) -- SameSite=Lax silently drops the
+    # cookie on cross-site fetch() calls from there, so production needs
+    # SameSite=None (requires Secure, already forced below). CSRF is instead
+    # covered by the CORS origin allowlist + every state-changing route
+    # requiring a JSON body, which a plain cross-site HTML form can't send.
+    _is_production = os.getenv('APP_ENV', 'development') == 'production'
     JWT_TOKEN_LOCATION = ['headers', 'cookies']
-    JWT_COOKIE_SECURE = os.getenv('APP_ENV', 'development') == 'production'
-    JWT_COOKIE_SAMESITE = 'Lax'
-    JWT_COOKIE_CSRF_PROTECT = False  # CORS allowlist + SameSite=Lax provides CSRF protection
+    JWT_COOKIE_SECURE = _is_production
+    JWT_COOKIE_SAMESITE = 'None' if _is_production else 'Lax'
+    JWT_COOKIE_CSRF_PROTECT = False  # CORS allowlist + JSON-only bodies provide CSRF protection
     JWT_ACCESS_COOKIE_NAME = 'access_token'
 
     # Rate limiting — uses in-memory store by default; set REDIS_URL for multi-worker
