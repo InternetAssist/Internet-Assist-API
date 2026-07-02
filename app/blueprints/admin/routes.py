@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from flask import current_app, g, make_response, redirect, request, session, url_for
+from flask import abort, current_app, g, make_response, redirect, request, session, url_for
 from flask_jwt_extended import create_access_token, get_jwt, get_jwt_identity, jwt_required, set_access_cookies, unset_jwt_cookies
 from flask_smorest import Blueprint
 from sqlalchemy import func, or_
@@ -15,8 +15,6 @@ from app.models.job_application import JobApplication
 from app.models.job_posting import JobPosting
 from app.models.project import Project
 from app.models.quote import Quote
-from app.models.role import Role
-from app.models.user import User
 from app.schemas.admin import (
     JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
@@ -24,7 +22,9 @@ from app.schemas.admin import (
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_job_status_update
 from app.services.media_service import delete_image, save_image, load_document
-from app.services.ms_auth_service import build_auth_flow, complete_auth_flow, has_admin_app_role
+from app.services.ms_auth_service import (
+    build_auth_flow, complete_auth_flow, get_profile_details, get_profile_photo, has_admin_app_role,
+)
 from app.utils.decorators import roles_required
 from app.utils.response import envelope
 
@@ -42,8 +42,11 @@ def _paginate(query, page: int, page_size: int):
 # against Azure AD. Authorization (do they get in) is a separate check against
 # the ia-support-admin App Role on the same app registration, using the
 # app-only Graph credentials already used for sending email — see
-# app/services/ms_auth_service.py. Everything downstream of a successful login
-# (the JWT cookie, roles_required('admin'), audit logging) is unchanged.
+# app/services/ms_auth_service.py. There's no local users table — Azure is
+# the source of truth for identity and role. Everything the app needs about
+# who's signed in (email, name, roles) is baked into the JWT itself at login
+# time and read back out by roles_required() (app/utils/decorators.py) on
+# every request — see CurrentUser there.
 
 @blp.route('/admin/login/microsoft', methods=['GET'])
 @limiter.limit('10/minute')
@@ -97,26 +100,27 @@ def microsoft_callback():
         )
         return redirect(f'{frontend_url}/auth?error=forbidden')
 
-    user = User.query.filter(func.lower(User.email) == email).first()
-    admin_role = Role.query.filter_by(name='admin').first()
-    if not user:
-        user = User(email=email, full_name=full_name)
-        db.session.add(user)
-    else:
-        user.full_name = full_name
-    if not user.is_active:
-        user.is_active = True
-    if admin_role and admin_role not in user.roles:
-        user.roles.append(admin_role)
-    user.last_login_at = datetime.now(timezone.utc)
-    db.session.commit()
+    try:
+        profile = get_profile_details(oid)
+    except Exception:
+        current_app.logger.exception('ms_profile_fetch_failed')
+        profile = {'job_title': None, 'department': None}
 
-    token = create_access_token(identity=user.id)
+    token = create_access_token(
+        identity=email,
+        additional_claims={
+            'full_name': full_name,
+            'roles': ['admin'],
+            'oid': oid,
+            'job_title': profile.get('job_title'),
+            'department': profile.get('department'),
+        },
+    )
     log_audit_action(
-        actor_user_id=user.id,
+        actor_user_id=email,
         action='admin_login_success',
         entity='user',
-        entity_id=user.id,
+        entity_id=email,
         ip=request.remote_addr,
     )
     resp = make_response(redirect(f'{frontend_url}/admin'))
@@ -127,15 +131,36 @@ def microsoft_callback():
 @blp.route('/admin/me', methods=['GET'])
 @jwt_required()
 def admin_me():
-    user = db.session.get(User, get_jwt_identity())
-    if not user or not user.is_active:
-        return envelope(error={'code': 'unauthorized', 'message': 'Not signed in', 'details': None}, status=401)
+    email = get_jwt_identity()
+    claims = get_jwt()
     return envelope(data={
-        'id': user.id,
-        'email': user.email,
-        'full_name': user.full_name,
-        'roles': [role.name for role in user.roles],
+        'id': email,
+        'email': email,
+        'full_name': claims.get('full_name', email),
+        'roles': claims.get('roles', []),
+        'job_title': claims.get('job_title'),
+        'department': claims.get('department'),
     }, status=200)
+
+
+@blp.route('/admin/me/photo', methods=['GET'])
+@jwt_required()
+def admin_me_photo():
+    oid = get_jwt().get('oid')
+    if not oid:
+        abort(404)
+    try:
+        result = get_profile_photo(oid)
+    except Exception:
+        current_app.logger.exception('ms_photo_fetch_failed')
+        abort(502)
+    if result is None:
+        abort(404)
+    photo_bytes, content_type = result
+    resp = make_response(photo_bytes)
+    resp.headers['Content-Type'] = content_type
+    resp.headers['Cache-Control'] = 'private, max-age=3600'
+    return resp
 
 
 @blp.route('/admin/logout', methods=['POST'])
@@ -533,7 +558,6 @@ def stats():
         'contacts': Contact.query.count(),
         'quotes': Quote.query.count(),
         'jobs': JobApplication.query.count(),
-        'users': User.query.count(),
         'postings': JobPosting.query.count(),
         'projects': Project.query.count(),
     }
@@ -565,9 +589,9 @@ def list_audit_logs(payload):
     query = AuditLog.query
     if payload.get('status'):  # reuse 'status' query param as 'entity' filter
         query = query.filter(AuditLog.entity == payload['status'])
-    if payload.get('q'):  # search in action or user_id
+    if payload.get('q'):  # search in action or actor email
         q = f"%{payload['q']}%"
-        query = query.filter(or_(AuditLog.action.ilike(q), AuditLog.actor_user_id == payload['q']))
+        query = query.filter(or_(AuditLog.action.ilike(q), AuditLog.actor_user_id.ilike(q)))
     items, meta = _paginate(query.order_by(AuditLog.created_at.desc()), payload['page'], payload['page_size'])
     log_audit_action(actor_user_id=g.current_user.id, action='admin_list_audit_logs', entity='audit_log', ip=request.remote_addr)
     return envelope(data=[_serialize_audit(i) for i in items], meta=meta, status=200)
