@@ -265,12 +265,12 @@ fixed when migrating off SQL Server).
 - Dev server (`waitress`) is not for production — use `gunicorn` behind a
   reverse proxy (nginx/IIS) that terminates TLS.
 - `production.config.env` + `apply-config.sh` (repo root, one level above
-  `IA/`) generate `.env` for this app (and the sibling frontend/ticket
-  apps) from a single source of truth, including `GRAPH_*` (the same
-  Azure AD "Tech Support" app credentials used for both email and
-  Microsoft login — `MS_AUTH_*` isn't set separately since it defaults to
-  these). B1's database is MariaDB (`DB1_*` vars); B2 (ticket platform)
-  keeps its own separate SQL Server config (`DB_SERVER`/`DB_SA_PASSWORD`).
+  `IA/`) generate `.env` for this app and the sibling frontend from a
+  single source of truth, including `GRAPH_*` (the same Azure AD "Tech
+  Support" app credentials used for both email and Microsoft login —
+  `MS_AUTH_*` isn't set separately since it defaults to these). B1's
+  database is MariaDB (`DB1_*` vars). The ticket platform (B2/F2) has its
+  own separate config, not managed from this file.
 - Security headers (CSP, HSTS in prod, X-Frame-Options, etc.) are set
   unconditionally in `app/__init__.py`'s `after_request` hook — no reverse
   proxy configuration needed for those.
