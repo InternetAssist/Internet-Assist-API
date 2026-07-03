@@ -15,13 +15,11 @@ depends_on = None
 
 
 def upgrade():
-    op.drop_index('ix_otp_tokens_session_hash', table_name='otp_tokens')
-    op.drop_index('ix_otp_tokens_user_id', table_name='otp_tokens')
+    # Dropping the whole table also drops its indexes -- explicit index drops
+    # beforehand aren't just redundant, they're actively rejected by
+    # MariaDB/MySQL when the index still backs a live FK constraint (SQL
+    # Server allowed it, which is how this shipped originally).
     op.drop_table('otp_tokens')
-
-    with op.batch_alter_table('password_reset_tokens', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_password_reset_tokens_user_id'))
-        batch_op.drop_index(batch_op.f('ix_password_reset_tokens_token_hash'))
     op.drop_table('password_reset_tokens')
 
     op.drop_column('users', 'password_hash')

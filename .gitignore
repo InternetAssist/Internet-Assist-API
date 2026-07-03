@@ -28,3 +28,9 @@ instance/
 .vscode/
 .idea/
 *.swp
+
+# Local media storage (see MEDIA_UPLOAD_DIR in .env)
+media_local/
+
+# macOS
+.DS_Store
