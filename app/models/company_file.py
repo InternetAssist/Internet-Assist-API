@@ -16,3 +16,4 @@ class CompanyFile(BaseModel):
     file_size         = db.Column(db.Integer, nullable=False)
     description       = db.Column(db.String(500), nullable=True)
     uploaded_by       = db.Column(db.String(255), nullable=True)
+    status            = db.Column(db.String(20), default='active', nullable=False, index=True)

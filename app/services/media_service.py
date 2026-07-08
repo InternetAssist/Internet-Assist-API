@@ -57,12 +57,11 @@ def _optimize_image(data: bytes, ext: str) -> bytes:
         return data
 
 
-_ALLOWED_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx', '.msi'}
+_ALLOWED_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx'}
 _DOC_CONTENT_TYPES = {
     '.pdf':  'application/pdf',
     '.doc':  'application/msword',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    '.msi':  'application/x-msi',
 }
 
 
@@ -80,6 +79,22 @@ def _media_dir() -> Path:
         d.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         log.error('Cannot create MEDIA_UPLOAD_DIR %s: %s', d, exc)
+        raise
+    return d
+
+
+def _company_files_dir() -> Path:
+    """Separate, independently-configurable directory for company installer
+    files (NinjaOne MSIs etc) -- these can be much larger than CVs/images and
+    an operator may want them on a different disk/volume entirely, so this
+    isn't just a subfolder of MEDIA_UPLOAD_DIR unless COMPANY_FILES_DIR is
+    left unset."""
+    raw = current_app.config.get('COMPANY_FILES_DIR', '')
+    d = Path(raw) if raw else _media_dir() / 'company_files'
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log.error('Cannot create COMPANY_FILES_DIR %s: %s', d, exc)
         raise
     return d
 
@@ -145,4 +160,40 @@ def load_document(file_name: str) -> tuple[bytes, str] | None:
 
 def delete_document(file_name: str) -> None:
     enc_path = _media_dir() / f"{file_name}.enc"
+    enc_path.unlink(missing_ok=True)
+
+
+_ALLOWED_COMPANY_FILE_EXTENSIONS = {'.msi'}
+_COMPANY_FILE_CONTENT_TYPES = {'.msi': 'application/x-msi'}
+
+
+def save_company_file(data: bytes, original_ext: str) -> str:
+    """Encrypt and persist a company installer file. Stored under
+    COMPANY_FILES_DIR, independent of MEDIA_UPLOAD_DIR. Returns the stored file_name."""
+    ext = original_ext.lower()
+    if ext not in _ALLOWED_COMPANY_FILE_EXTENSIONS:
+        raise ValueError(f'Unsupported company file type: {ext}')
+    file_id   = secrets.token_hex(16)
+    file_name = f"{file_id}{ext}"
+    enc_path  = _company_files_dir() / f"{file_name}.enc"
+    enc_path.write_bytes(_fernet().encrypt(data))
+    return file_name
+
+
+def load_company_file(file_name: str) -> tuple[bytes, str] | None:
+    """Decrypt and return (bytes, content_type) for a stored company file, or None if missing/invalid."""
+    enc_path = _company_files_dir() / f"{file_name}.enc"
+    if not enc_path.exists():
+        return None
+    try:
+        raw = _fernet().decrypt(enc_path.read_bytes())
+    except (InvalidToken, Exception):
+        return None
+    ext = Path(file_name).suffix.lower()
+    content_type = _COMPANY_FILE_CONTENT_TYPES.get(ext, 'application/octet-stream')
+    return raw, content_type
+
+
+def delete_company_file(file_name: str) -> None:
+    enc_path = _company_files_dir() / f"{file_name}.enc"
     enc_path.unlink(missing_ok=True)

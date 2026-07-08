@@ -24,7 +24,11 @@ from app.schemas.admin import (
 )
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_job_status_update
-from app.services.media_service import delete_document, delete_image, save_document, save_image, load_document
+from app.services.media_service import (
+    delete_document, delete_image,
+    load_company_file, load_document,
+    save_company_file, save_image,
+)
 from app.services.ms_auth_service import (
     build_auth_flow, complete_auth_flow, get_profile_details, get_profile_photo, has_admin_app_role,
 )
@@ -785,7 +789,8 @@ def _serialize_company(c: Company) -> dict:
         'id': c.id,
         'name': c.name,
         'notes': c.notes,
-        'file_count': c.files.count(),
+        'status': c.status,
+        'file_count': c.files.filter(CompanyFile.status != 'archived').count(),
         'created_at': c.created_at.isoformat(),
         'updated_at': c.updated_at.isoformat(),
     }
@@ -799,6 +804,7 @@ def _serialize_company_file(f: CompanyFile) -> dict:
         'file_size': f.file_size,
         'description': f.description,
         'uploaded_by': f.uploaded_by,
+        'status': f.status,
         'created_at': f.created_at.isoformat(),
     }
 
@@ -808,6 +814,10 @@ def _serialize_company_file(f: CompanyFile) -> dict:
 @blp.arguments(PaginationQuerySchema, location='query')
 def list_companies(payload):
     query = Company.query
+    if payload.get('status'):
+        query = query.filter(Company.status == payload['status'])
+    else:
+        query = query.filter(Company.status != 'archived')
     if payload.get('q'):
         query = query.filter(Company.name.ilike(f"%{payload['q']}%"))
     items, meta = _paginate(query.order_by(Company.name.asc()), payload['page'], payload['page_size'])
@@ -856,14 +866,22 @@ def delete_company(company_id):
     if not company:
         return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
 
-    for f in company.files.all():
-        delete_document(f.stored_file_id)
-
-    name = company.name
-    db.session.delete(company)
+    # Soft delete — archive the company and its files, don't touch the
+    # encrypted blobs on disk. Matches the archive pattern used everywhere
+    # else in this admin panel (Contacts/Quotes/Jobs/Projects).
+    old_status = company.status
+    company.status = 'archived'
+    company.files.update({CompanyFile.status: 'archived'}, synchronize_session=False)
     db.session.commit()
 
-    log_audit_action(actor_user_id=g.current_user.id, action='admin_delete_company', entity='company', entity_id=company_id, diff={'name': name}, ip=request.remote_addr)
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_archive_company',
+        entity='company',
+        entity_id=company_id,
+        diff={'status': {'old': old_status, 'new': 'archived'}},
+        ip=request.remote_addr,
+    )
     return envelope(data={'id': company_id}, status=200)
 
 
@@ -874,7 +892,7 @@ def list_company_files(company_id):
     if not company:
         return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
 
-    files = company.files.order_by(CompanyFile.created_at.desc()).all()
+    files = company.files.filter(CompanyFile.status != 'archived').order_by(CompanyFile.created_at.desc()).all()
     log_audit_action(actor_user_id=g.current_user.id, action='admin_list_company_files', entity='company', entity_id=company_id, ip=request.remote_addr)
     return envelope(data=[_serialize_company_file(f) for f in files], status=200)
 
@@ -904,7 +922,7 @@ def upload_company_file(company_id):
     description = (request.form.get('description') or '').strip() or None
 
     try:
-        stored_file_id = save_document(data, ext)
+        stored_file_id = save_company_file(data, ext)
     except Exception:
         return envelope(error={'code': 'upload_failed', 'message': 'Failed to store file.', 'details': None}, status=500)
 
@@ -939,7 +957,7 @@ def download_company_file(company_id, file_id):
     if not company_file or company_file.company_id != company_id:
         return envelope(error={'code': 'not_found', 'message': 'File not found', 'details': None}, status=404)
 
-    doc = load_document(company_file.stored_file_id)
+    doc = load_company_file(company_file.stored_file_id)
     if not doc:
         return envelope(error={'code': 'file_unavailable', 'message': 'File could not be retrieved', 'details': None}, status=404)
 
@@ -967,17 +985,18 @@ def delete_company_file(company_id, file_id):
     if not company_file or company_file.company_id != company_id:
         return envelope(error={'code': 'not_found', 'message': 'File not found', 'details': None}, status=404)
 
-    delete_document(company_file.stored_file_id)
-    filename = company_file.original_filename
-    db.session.delete(company_file)
+    # Soft delete — archive it, leave the encrypted blob on disk. Same
+    # reasoning as delete_company: reversible, matches the rest of the app.
+    old_status = company_file.status
+    company_file.status = 'archived'
     db.session.commit()
 
     log_audit_action(
         actor_user_id=g.current_user.id,
-        action='admin_delete_company_file',
+        action='admin_archive_company_file',
         entity='company_file',
         entity_id=file_id,
-        diff={'filename': filename},
+        diff={'filename': company_file.original_filename, 'status': {'old': old_status, 'new': 'archived'}},
         ip=request.remote_addr,
     )
     return envelope(data={'id': file_id}, status=200)
