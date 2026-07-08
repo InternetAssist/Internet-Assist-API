@@ -77,6 +77,13 @@ class CompanyFileUploadSchema(BaseSchema):
     description = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=500))
 
 
+class CompanyFilePatchSchema(Schema):
+    class Meta:
+        unknown = EXCLUDE
+
+    description = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=500))
+
+
 class JobPostingCreateSchema(BaseSchema):
     title           = fields.String(required=True, validate=validate.Length(min=2, max=255))
     team            = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=100))

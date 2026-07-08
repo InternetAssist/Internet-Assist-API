@@ -18,7 +18,7 @@ from app.models.job_posting import JobPosting
 from app.models.project import Project
 from app.models.quote import Quote
 from app.schemas.admin import (
-    CompanyCreateSchema, CompanyFileUploadSchema, CompanyPatchSchema,
+    CompanyCreateSchema, CompanyFilePatchSchema, CompanyFileUploadSchema, CompanyPatchSchema,
     JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
 )
@@ -459,8 +459,9 @@ def delete_job(job_id):
 @blp.route('/admin/jobs/<string:job_id>/cv', methods=['GET'])
 @roles_required('admin')
 def download_job_cv(job_id):
+    from pathlib import Path as _Path
+
     from flask import Response
-    import mimetypes
 
     job = db.session.get(JobApplication, job_id)
     if not job:
@@ -472,8 +473,8 @@ def download_job_cv(job_id):
     if not doc:
         return envelope(error={'code': 'cv_unavailable', 'message': 'CV file could not be retrieved', 'details': None}, status=404)
 
-    data, ext = doc
-    mime = mimetypes.types_map.get(ext, 'application/octet-stream')
+    data, mime = doc
+    ext = _Path(job.cv_blob_url).suffix
     safe_name = f"cv_{job.full_name.replace(' ', '_')}_{job_id[:8]}{ext}"
     log_audit_action(actor_user_id=g.current_user.id, action='admin_download_cv', entity='job_application', entity_id=job_id, ip=request.remote_addr)
     return Response(
@@ -946,6 +947,31 @@ def upload_company_file(company_id):
         ip=request.remote_addr,
     )
     return envelope(data=_serialize_company_file(company_file), status=201)
+
+
+@blp.route('/admin/companies/<string:company_id>/files/<string:file_id>', methods=['PATCH'])
+@roles_required('admin')
+@blp.arguments(CompanyFilePatchSchema)
+def patch_company_file(payload, company_id, file_id):
+    company_file = db.session.get(CompanyFile, file_id)
+    if not company_file or company_file.company_id != company_id:
+        return envelope(error={'code': 'not_found', 'message': 'File not found', 'details': None}, status=404)
+
+    diff = {}
+    if payload.get('description') is not None:
+        diff['description'] = {'old': company_file.description, 'new': payload['description']}
+        company_file.description = payload['description']
+    db.session.commit()
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_update_company_file',
+        entity='company_file',
+        entity_id=file_id,
+        diff=diff,
+        ip=request.remote_addr,
+    )
+    return envelope(data=_serialize_company_file(company_file), status=200)
 
 
 @blp.route('/admin/companies/<string:company_id>/files/<string:file_id>/download')
