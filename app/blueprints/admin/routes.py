@@ -10,18 +10,21 @@ from sqlalchemy import func, or_
 from app.extensions import db, jwt, limiter
 from app.models.token_blacklist import TokenBlacklist
 from app.models.audit_log import AuditLog
+from app.models.company import Company
+from app.models.company_file import CompanyFile
 from app.models.contact import Contact
 from app.models.job_application import JobApplication
 from app.models.job_posting import JobPosting
 from app.models.project import Project
 from app.models.quote import Quote
 from app.schemas.admin import (
+    CompanyCreateSchema, CompanyFileUploadSchema, CompanyPatchSchema,
     JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
 )
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_job_status_update
-from app.services.media_service import delete_image, save_image, load_document
+from app.services.media_service import delete_document, delete_image, save_document, save_image, load_document
 from app.services.ms_auth_service import (
     build_auth_flow, complete_auth_flow, get_profile_details, get_profile_photo, has_admin_app_role,
 )
@@ -766,6 +769,218 @@ def upload_project_image(project_id):
         ip=request.remote_addr,
     )
     return envelope(data=_serialize_project(proj), status=200)
+
+
+# ── Companies & their installer files (e.g. per-client NinjaOne MSIs) ─────────
+# Files are encrypted at rest via media_service (same mechanism as CVs/project
+# images) and only ever readable through these @roles_required('admin') routes
+# — there is no public route for company files.
+
+_ALLOWED_COMPANY_FILE_EXTENSIONS = {'.msi'}
+_MAX_COMPANY_FILE_SIZE = 250 * 1024 * 1024  # matches MAX_CONTENT_LENGTH
+
+
+def _serialize_company(c: Company) -> dict:
+    return {
+        'id': c.id,
+        'name': c.name,
+        'notes': c.notes,
+        'file_count': c.files.count(),
+        'created_at': c.created_at.isoformat(),
+        'updated_at': c.updated_at.isoformat(),
+    }
+
+
+def _serialize_company_file(f: CompanyFile) -> dict:
+    return {
+        'id': f.id,
+        'company_id': f.company_id,
+        'original_filename': f.original_filename,
+        'file_size': f.file_size,
+        'description': f.description,
+        'uploaded_by': f.uploaded_by,
+        'created_at': f.created_at.isoformat(),
+    }
+
+
+@blp.route('/admin/companies')
+@roles_required('admin')
+@blp.arguments(PaginationQuerySchema, location='query')
+def list_companies(payload):
+    query = Company.query
+    if payload.get('q'):
+        query = query.filter(Company.name.ilike(f"%{payload['q']}%"))
+    items, meta = _paginate(query.order_by(Company.name.asc()), payload['page'], payload['page_size'])
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_list_companies', entity='company', ip=request.remote_addr)
+    return envelope(data=[_serialize_company(c) for c in items], meta=meta, status=200)
+
+
+@blp.route('/admin/companies', methods=['POST'])
+@roles_required('admin')
+@blp.arguments(CompanyCreateSchema)
+def create_company(payload):
+    if Company.query.filter(db.func.lower(Company.name) == payload['name'].lower()).first():
+        return envelope(error={'code': 'duplicate', 'message': 'A company with this name already exists.', 'details': None}, status=409)
+
+    company = Company(name=payload['name'], notes=payload.get('notes'))
+    db.session.add(company)
+    db.session.commit()
+
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_create_company', entity='company', entity_id=company.id, diff={'name': company.name}, ip=request.remote_addr)
+    return envelope(data=_serialize_company(company), status=201)
+
+
+@blp.route('/admin/companies/<string:company_id>', methods=['PATCH'])
+@roles_required('admin')
+@blp.arguments(CompanyPatchSchema)
+def patch_company(payload, company_id):
+    company = db.session.get(Company, company_id)
+    if not company:
+        return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
+
+    diff = {}
+    for field in ('name', 'notes'):
+        if payload.get(field) is not None:
+            diff[field] = {'old': getattr(company, field), 'new': payload[field]}
+            setattr(company, field, payload[field])
+    db.session.commit()
+
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_update_company', entity='company', entity_id=company_id, diff=diff, ip=request.remote_addr)
+    return envelope(data=_serialize_company(company), status=200)
+
+
+@blp.route('/admin/companies/<string:company_id>', methods=['DELETE'])
+@roles_required('admin')
+def delete_company(company_id):
+    company = db.session.get(Company, company_id)
+    if not company:
+        return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
+
+    for f in company.files.all():
+        delete_document(f.stored_file_id)
+
+    name = company.name
+    db.session.delete(company)
+    db.session.commit()
+
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_delete_company', entity='company', entity_id=company_id, diff={'name': name}, ip=request.remote_addr)
+    return envelope(data={'id': company_id}, status=200)
+
+
+@blp.route('/admin/companies/<string:company_id>/files')
+@roles_required('admin')
+def list_company_files(company_id):
+    company = db.session.get(Company, company_id)
+    if not company:
+        return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
+
+    files = company.files.order_by(CompanyFile.created_at.desc()).all()
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_list_company_files', entity='company', entity_id=company_id, ip=request.remote_addr)
+    return envelope(data=[_serialize_company_file(f) for f in files], status=200)
+
+
+@blp.route('/admin/companies/<string:company_id>/files', methods=['POST'])
+@roles_required('admin')
+def upload_company_file(company_id):
+    company = db.session.get(Company, company_id)
+    if not company:
+        return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
+
+    upload = request.files.get('file')
+    if not upload or not upload.filename:
+        return envelope(error={'code': 'no_file', 'message': 'No file provided.', 'details': None}, status=400)
+
+    from pathlib import Path as _Path
+    from werkzeug.utils import secure_filename
+    original_name = secure_filename(upload.filename)
+    ext = _Path(original_name).suffix.lower()
+    if ext not in _ALLOWED_COMPANY_FILE_EXTENSIONS:
+        return envelope(error={'code': 'invalid_type', 'message': 'Only .msi files are accepted.', 'details': None}, status=422)
+
+    data = upload.read()
+    if len(data) > _MAX_COMPANY_FILE_SIZE:
+        return envelope(error={'code': 'file_too_large', 'message': 'File exceeds the 250 MB limit.', 'details': None}, status=413)
+
+    description = (request.form.get('description') or '').strip() or None
+
+    try:
+        stored_file_id = save_document(data, ext)
+    except Exception:
+        return envelope(error={'code': 'upload_failed', 'message': 'Failed to store file.', 'details': None}, status=500)
+
+    company_file = CompanyFile(
+        company_id=company_id,
+        original_filename=original_name,
+        stored_file_id=stored_file_id,
+        file_size=len(data),
+        description=description,
+        uploaded_by=g.current_user.id,
+    )
+    db.session.add(company_file)
+    db.session.commit()
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_upload_company_file',
+        entity='company_file',
+        entity_id=company_file.id,
+        diff={'company': company.name, 'filename': original_name, 'size': len(data)},
+        ip=request.remote_addr,
+    )
+    return envelope(data=_serialize_company_file(company_file), status=201)
+
+
+@blp.route('/admin/companies/<string:company_id>/files/<string:file_id>/download')
+@roles_required('admin')
+def download_company_file(company_id, file_id):
+    from flask import Response
+
+    company_file = db.session.get(CompanyFile, file_id)
+    if not company_file or company_file.company_id != company_id:
+        return envelope(error={'code': 'not_found', 'message': 'File not found', 'details': None}, status=404)
+
+    doc = load_document(company_file.stored_file_id)
+    if not doc:
+        return envelope(error={'code': 'file_unavailable', 'message': 'File could not be retrieved', 'details': None}, status=404)
+
+    data, mime = doc
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_download_company_file',
+        entity='company_file',
+        entity_id=file_id,
+        diff={'filename': company_file.original_filename},
+        ip=request.remote_addr,
+    )
+    return Response(
+        data,
+        status=200,
+        mimetype=mime,
+        headers={'Content-Disposition': f'attachment; filename="{company_file.original_filename}"'},
+    )
+
+
+@blp.route('/admin/companies/<string:company_id>/files/<string:file_id>', methods=['DELETE'])
+@roles_required('admin')
+def delete_company_file(company_id, file_id):
+    company_file = db.session.get(CompanyFile, file_id)
+    if not company_file or company_file.company_id != company_id:
+        return envelope(error={'code': 'not_found', 'message': 'File not found', 'details': None}, status=404)
+
+    delete_document(company_file.stored_file_id)
+    filename = company_file.original_filename
+    db.session.delete(company_file)
+    db.session.commit()
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_delete_company_file',
+        entity='company_file',
+        entity_id=file_id,
+        diff={'filename': filename},
+        ip=request.remote_addr,
+    )
+    return envelope(data={'id': file_id}, status=200)
 
 
 # ── Public projects list ──────────────────────────────────────────────────────

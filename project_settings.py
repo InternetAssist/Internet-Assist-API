@@ -51,7 +51,7 @@ class BaseConfig:
         if origin.strip()
     ]
 
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB upload cap
+    MAX_CONTENT_LENGTH = 250 * 1024 * 1024  # 250 MB — raised for company installer files (NinjaOne MSIs etc, often 50MB+)
     JSON_SORT_KEYS = False
     APPINSIGHTS_CONNECTION_STRING = os.getenv('APPINSIGHTS_CONNECTION_STRING', '')
 

@@ -57,11 +57,12 @@ def _optimize_image(data: bytes, ext: str) -> bytes:
         return data
 
 
-_ALLOWED_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx'}
+_ALLOWED_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx', '.msi'}
 _DOC_CONTENT_TYPES = {
     '.pdf':  'application/pdf',
     '.doc':  'application/msword',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.msi':  'application/x-msi',
 }
 
 
