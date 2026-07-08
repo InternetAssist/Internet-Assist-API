@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+from datetime import datetime
 from functools import lru_cache
 from html import escape
 from pathlib import Path
@@ -253,6 +254,8 @@ def send_confirmation(
         return False
 
     first = escape(recipient_name.split()[0] if recipient_name else 'there')
+    submitted_on = datetime.now().strftime('%d %B %Y')
+    reply_to = current_app.config.get('NOTIFY_EMAIL_1') or 'enquiries@ia.uk'
 
     detail_rows = ''.join(
         f'<tr>'
@@ -261,17 +264,24 @@ def send_confirmation(
         f'</tr>'
         for k, v in (details or {}).items() if v
     )
-    if ticket_ref:
-        detail_rows = (
-            f'<tr><td style="padding:10px 16px;font-size:13px;font-weight:600;color:#6b7280;white-space:nowrap;width:32%">Reference</td>'
-            f'<td style="padding:10px 16px;font-size:14px;font-weight:700;color:#0d9488">{escape(ticket_ref)}</td></tr>'
-        ) + detail_rows
+    detail_rows = (
+        f'<tr><td style="padding:10px 16px;font-size:13px;font-weight:600;color:#6b7280;white-space:nowrap;width:32%">Submitted on</td>'
+        f'<td style="padding:10px 16px;font-size:14px;color:#111827">{escape(submitted_on)}</td></tr>'
+    ) + detail_rows
 
     details_card = f"""
           <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;margin:0 0 28px">
             <tr><td style="padding:14px 16px 0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Your submission</td></tr>
             {detail_rows}
-          </table>""" if detail_rows else ''
+          </table>"""
+
+    ref_badge = f"""
+          <table cellpadding="0" cellspacing="0" style="margin:0 0 20px">
+            <tr><td style="background:#f0fdfa;border:1px solid #99f6e4;border-radius:999px;padding:8px 18px">
+              <span style="font-size:12px;color:#6b7280;font-weight:600">Reference&nbsp;</span>
+              <span style="font-size:13px;color:#0f766e;font-weight:800;letter-spacing:.03em">{escape(ticket_ref)}</span>
+            </td></tr>
+          </table>""" if ticket_ref else ''
 
     steps_html = ''.join(
         f"""
@@ -305,7 +315,8 @@ def send_confirmation(
         </td></tr>
         <tr><td style="padding:32px">
           <p style="margin:0 0 16px;color:#111827;font-size:15px">Hi {first},</p>
-          <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.6">{cfg['intro']}</p>
+          <p style="margin:0 0 20px;color:#374151;font-size:15px;line-height:1.6">{cfg['intro']}</p>
+          {ref_badge}
           {details_card}
           <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px">
             <tr><td style="padding:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#0d9488">What happens next</td></tr>
@@ -318,18 +329,41 @@ def send_confirmation(
               <span style="font-size:13px;color:#0f766e;font-weight:600">Expected response: {escape(cfg['eta'])}</span>
             </td></tr>
           </table>
-          <table cellpadding="0" cellspacing="0">
+          <table cellpadding="0" cellspacing="0" style="margin-bottom:28px">
             <tr><td style="background:{_BRAND_GRADIENT};border-radius:999px">
               <a href="tel:01621840014" style="display:inline-block;padding:13px 28px;color:#fff;font-size:14px;font-weight:700;text-decoration:none">Call us: 01621 840014</a>
             </td></tr>
           </table>
+          <p style="margin:0 0 4px;color:#374151;font-size:14px;line-height:1.6">
+            Need to add anything? Just reply to this email and it'll reach our team directly.
+          </p>
+          <p style="margin:20px 0 0;color:#374151;font-size:14px;line-height:1.6">
+            Thank you for choosing Internet Assist for your IT needs.
+          </p>
         </td></tr>
-        <tr><td style="padding:20px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center">
-          <p style="margin:0 0 4px;font-size:12px;color:#9ca3af">
-            Internet Assist Limited · Maldon, Essex · Cyber Essentials Certified · ISO 9001
+        <tr><td style="padding:0 32px">
+          <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="border-top:1px solid #e5e7eb"></td></tr></table>
+        </td></tr>
+        <tr><td style="padding:12px 32px 24px">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td align="center" style="padding:8px 4px;font-size:11px;color:#6b7280;font-weight:600">🇬🇧 UK-based engineers</td>
+              <td align="center" style="padding:8px 4px;font-size:11px;color:#6b7280;font-weight:600">🛡️ Cyber Essentials Certified</td>
+              <td align="center" style="padding:8px 4px;font-size:11px;color:#6b7280;font-weight:600">✅ ISO 9001 Certified</td>
+            </tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:24px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center">
+          <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#111827">Internet Assist Limited</p>
+          <p style="margin:0 0 10px;font-size:12px;color:#9ca3af;line-height:1.6">
+            Network House, Station Road, Maldon, Essex, CM9 4LQ
           </p>
           <p style="margin:0;font-size:12px;color:#9ca3af">
-            <a href="mailto:enquiries@ia.uk" style="color:#0d9488;text-decoration:none">enquiries@ia.uk</a>
+            <a href="tel:01621840014" style="color:#0d9488;text-decoration:none;font-weight:600">01621 840014</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:enquiries@ia.uk" style="color:#0d9488;text-decoration:none;font-weight:600">enquiries@ia.uk</a>
+            &nbsp;·&nbsp;
+            <a href="https://ia.uk" style="color:#0d9488;text-decoration:none;font-weight:600">ia.uk</a>
           </p>
         </td></tr>
       </table>
@@ -343,15 +377,20 @@ def send_confirmation(
         f"Hi {recipient_name},\n\n"
         f"{cfg['intro']}\n\n"
         + (f"Your reference: {ticket_ref}\n" if ticket_ref else "")
+        + f"Submitted on: {submitted_on}\n"
         + (f"\nYour submission:\n{detail_lines}" if detail_lines else "")
         + f"\nWhat happens next:\n{steps_lines}"
         + f"\nExpected response: {cfg['eta']}\n\n"
-        "For urgent enquiries call 01621 840014 or email enquiries@ia.uk.\n\n"
-        "— Internet Assist"
+        "Need to add anything? Just reply to this email and it'll reach our team directly.\n\n"
+        "Thank you for choosing Internet Assist for your IT needs.\n\n"
+        "Internet Assist Limited\n"
+        "Network House, Station Road, Maldon, Essex, CM9 4LQ\n"
+        "01621 840014 | enquiries@ia.uk | ia.uk\n"
+        "UK-based engineers | Cyber Essentials Certified | ISO 9001 Certified"
     )
 
     try:
-        _graph_send(to=[recipient_email], subject=cfg['subject'], html=html, plain=plain)
+        _graph_send(to=[recipient_email], subject=cfg['subject'], html=html, plain=plain, reply_to=reply_to)
         logger.info('confirmation_email_sent', recipient=recipient_email, ticket_type=ticket_type, ticket_ref=ticket_ref)
         return True
     except Exception:
