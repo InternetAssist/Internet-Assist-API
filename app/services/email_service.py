@@ -17,6 +17,13 @@ from app.services import file_settings
 # reused as a shared header across every transactional email so they all
 # look like they came from the same place.
 _BRAND_GRADIENT = 'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)'
+# Outlook desktop (Word rendering engine) doesn't support CSS gradients --
+# without this solid fallback, those <td>s render blank/white and white
+# heading text on top becomes invisible, which looks like stray empty
+# space. bgcolor is the attribute Outlook actually honours; background-color
+# is the CSS fallback for every other client that ignores bgcolor.
+_BRAND_SOLID = '#0d9488'
+_BRAND_BG = f'bgcolor="{_BRAND_SOLID}" style="background-color:{_BRAND_SOLID};background:{_BRAND_GRADIENT}'
 _LOGO_PATH = Path(__file__).parent / 'email_assets' / 'ia-logo.png'
 
 
@@ -30,7 +37,7 @@ def _email_header(title: str) -> str:
         <tr><td style="background:#ffffff;padding:28px 32px 18px;text-align:center">
           <img src="{_logo_data_uri()}" alt="Internet Assist" width="190" style="display:inline-block;height:auto;max-width:190px">
         </td></tr>
-        <tr><td style="background:{_BRAND_GRADIENT};padding:18px 32px">
+        <tr><td {_BRAND_BG};padding:18px 32px">
           <h1 style="margin:0;color:#fff;font-size:21px">{escape(title)}</h1>
         </td></tr>"""
 
@@ -142,7 +149,7 @@ def _build_html(ticket_type: str, ticket_id: str, fields: dict) -> str:
         <tr><td style="background:#ffffff;padding:32px 32px 16px;text-align:center">
           <img src="{_logo_data_uri()}" alt="Internet Assist" width="180" style="display:inline-block;height:auto;max-width:180px">
         </td></tr>
-        <tr><td style="background:{_BRAND_GRADIENT};padding:36px 32px;text-align:center">
+        <tr><td {_BRAND_BG};padding:36px 32px;text-align:center">
           <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px">
             <tr><td width="56" height="56" align="center" valign="middle" style="background:rgba(255,255,255,.2);border-radius:50%">
               <span style="font-size:26px;line-height:1">🔔</span>
@@ -165,7 +172,7 @@ def _build_html(ticket_type: str, ticket_id: str, fields: dict) -> str:
             {rows}
           </table>
           <table cellpadding="0" cellspacing="0">
-            <tr><td style="background:{_BRAND_GRADIENT};border-radius:999px">
+            <tr><td {_BRAND_BG};border-radius:999px">
               <a href="{escape(admin_url)}" style="display:inline-block;padding:13px 28px;color:#fff;font-size:14px;font-weight:700;text-decoration:none">View in Admin Panel</a>
             </td></tr>
           </table>
@@ -296,8 +303,7 @@ def send_confirmation(
         f"""
           <tr>
             <td width="32" valign="top" style="padding:0 12px 20px 0">
-              <table cellpadding="0" cellspacing="0"><tr><td width="24" height="24" align="center" valign="middle"
-                style="background:{_BRAND_GRADIENT};border-radius:50%;color:#fff;font-size:12px;font-weight:700">{i}</td></tr></table>
+              <table cellpadding="0" cellspacing="0"><tr><td width="24" height="24" align="center" valign="middle" {_BRAND_BG};border-radius:50%;color:#fff;font-size:12px;font-weight:700">{i}</td></tr></table>
             </td>
             <td valign="top" style="padding:0 0 20px;font-size:14px;color:#374151;line-height:1.5">{escape(step)}</td>
           </tr>"""
@@ -314,7 +320,7 @@ def send_confirmation(
         <tr><td style="background:#ffffff;padding:32px 32px 16px;text-align:center">
           <img src="{_logo_data_uri()}" alt="Internet Assist" width="180" style="display:inline-block;height:auto;max-width:180px">
         </td></tr>
-        <tr><td style="background:{_BRAND_GRADIENT};padding:36px 32px;text-align:center">
+        <tr><td {_BRAND_BG};padding:36px 32px;text-align:center">
           <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px">
             <tr><td width="56" height="56" align="center" valign="middle" style="background:rgba(255,255,255,.2);border-radius:50%">
               <span style="font-size:28px;color:#fff;line-height:1">&#10003;</span>
@@ -339,7 +345,7 @@ def send_confirmation(
             </td></tr>
           </table>
           <table cellpadding="0" cellspacing="0" style="margin-bottom:28px">
-            <tr><td style="background:{_BRAND_GRADIENT};border-radius:999px">
+            <tr><td {_BRAND_BG};border-radius:999px">
               <a href="tel:01621840014" style="display:inline-block;padding:13px 28px;color:#fff;font-size:14px;font-weight:700;text-decoration:none">Call us: 01621 840014</a>
             </td></tr>
           </table>
