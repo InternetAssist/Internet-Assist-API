@@ -31,19 +31,21 @@ def create_quote(payload):
     db.session.add(quote)
     db.session.commit()
 
+    fields = {
+        'Name':      quote.name,
+        'Email':     quote.email,
+        'Phone':     quote.phone,
+        'Company':   quote.company,
+        'Services':  ', '.join(quote.services or []),
+        'Team Size': quote.team_size,
+        'Timeline':  quote.timeline,
+        'Details':   quote.details,
+    }
+
     ticket = create_ticket(
         ticket_type='quote',
         ticket_id=quote.id,
-        fields={
-            'Name':      quote.name,
-            'Email':     quote.email,
-            'Phone':     quote.phone,
-            'Company':   quote.company,
-            'Services':  ', '.join(quote.services or []),
-            'Team Size': quote.team_size,
-            'Timeline':  quote.timeline,
-            'Details':   quote.details,
-        },
+        fields=fields,
         sender_email=quote.email,
         sender_name=quote.name,
     )
@@ -53,21 +55,7 @@ def create_quote(payload):
         db.session.commit()
 
     try:
-        send_ticket(
-            ticket_type='quote',
-            ticket_id=quote.id,
-            fields={
-                'Name':      quote.name,
-                'Email':     quote.email,
-                'Phone':     quote.phone,
-                'Company':   quote.company,
-                'Services':  ', '.join(quote.services or []),
-                'Team Size': quote.team_size,
-                'Timeline':  quote.timeline,
-                'Details':   quote.details,
-            },
-            user_email=quote.email,
-        )
+        send_ticket(ticket_type='quote', ticket_id=quote.id, fields=fields, user_email=quote.email)
     except Exception:
         pass
 
@@ -77,12 +65,7 @@ def create_quote(payload):
             recipient_email=quote.email,
             recipient_name=quote.name,
             ticket_ref=quote.ticket_ref,
-            details={
-                'Services':  ', '.join(quote.services or []),
-                'Team size': quote.team_size,
-                'Timeline':  quote.timeline,
-                'Details':   quote.details,
-            },
+            details=fields,
         )
     except Exception:
         pass

@@ -53,6 +53,15 @@ def create_job(payload):
     db.session.add(application)
     db.session.commit()
 
+    fields = {
+        'Name':         application.full_name,
+        'Email':        application.email,
+        'Phone':        application.phone,
+        'Position':     application.position,
+        'Cover Letter': application.cover_letter,
+        'CV':           cv_original_name or 'Not provided',
+    }
+
     # Notify HR via internal email with CV attached (best-effort)
     try:
         email_attachments = None
@@ -63,14 +72,7 @@ def create_job(payload):
         send_ticket_with_attachments(
             ticket_type='job_application',
             ticket_id=application.id,
-            fields={
-                'Name':         application.full_name,
-                'Email':        application.email,
-                'Phone':        application.phone,
-                'Position':     application.position,
-                'Cover Letter': application.cover_letter,
-                'CV':           cv_original_name or 'Not provided',
-            },
+            fields=fields,
             user_email=application.email,
             attachments=email_attachments,
         )
@@ -84,7 +86,7 @@ def create_job(payload):
             recipient_email=application.email,
             recipient_name=application.full_name,
             ticket_ref=None,
-            details={'Position': application.position, 'CV': cv_original_name or 'Not provided'},
+            details=fields,
         )
     except Exception:
         pass

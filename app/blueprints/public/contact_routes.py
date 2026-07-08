@@ -30,16 +30,18 @@ def create_contact(payload):
     db.session.add(contact)
     db.session.commit()
 
+    fields = {
+        'Name':    contact.name,
+        'Email':   contact.email,
+        'Phone':   contact.phone,
+        'Company': contact.company,
+        'Message': contact.message,
+    }
+
     ticket = create_ticket(
         ticket_type='contact',
         ticket_id=contact.id,
-        fields={
-            'Name':    contact.name,
-            'Email':   contact.email,
-            'Phone':   contact.phone,
-            'Company': contact.company,
-            'Message': contact.message,
-        },
+        fields=fields,
         sender_email=contact.email,
         sender_name=contact.name,
     )
@@ -49,18 +51,7 @@ def create_contact(payload):
         db.session.commit()
 
     try:
-        send_ticket(
-            ticket_type='contact',
-            ticket_id=contact.id,
-            fields={
-                'Name':    contact.name,
-                'Email':   contact.email,
-                'Phone':   contact.phone,
-                'Company': contact.company,
-                'Message': contact.message,
-            },
-            user_email=contact.email,
-        )
+        send_ticket(ticket_type='contact', ticket_id=contact.id, fields=fields, user_email=contact.email)
     except Exception:
         pass
 
@@ -70,7 +61,7 @@ def create_contact(payload):
             recipient_email=contact.email,
             recipient_name=contact.name,
             ticket_ref=contact.ticket_ref,
-            details={'Message': contact.message, 'Company': contact.company},
+            details=fields,
         )
     except Exception:
         pass
