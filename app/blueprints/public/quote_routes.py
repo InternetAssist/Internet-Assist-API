@@ -72,7 +72,18 @@ def create_quote(payload):
         pass
 
     try:
-        send_confirmation(ticket_type='quote', recipient_email=quote.email, recipient_name=quote.name, ticket_ref=quote.ticket_ref)
+        send_confirmation(
+            ticket_type='quote',
+            recipient_email=quote.email,
+            recipient_name=quote.name,
+            ticket_ref=quote.ticket_ref,
+            details={
+                'Services':  ', '.join(quote.services or []),
+                'Team size': quote.team_size,
+                'Timeline':  quote.timeline,
+                'Details':   quote.details,
+            },
+        )
     except Exception:
         pass
 

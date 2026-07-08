@@ -63,7 +63,13 @@ def create_remote_support(payload):
         pass
 
     try:
-        send_confirmation(ticket_type='remote_support', recipient_email=contact.email, recipient_name=contact.name, ticket_ref=contact.ticket_ref)
+        send_confirmation(
+            ticket_type='remote_support',
+            recipient_email=contact.email,
+            recipient_name=contact.name,
+            ticket_ref=contact.ticket_ref,
+            details={'Issue': contact.message, 'Phone': contact.phone},
+        )
     except Exception:
         pass
 

@@ -84,6 +84,7 @@ def create_job(payload):
             recipient_email=application.email,
             recipient_name=application.full_name,
             ticket_ref=None,
+            details={'Position': application.position, 'CV': cv_original_name or 'Not provided'},
         )
     except Exception:
         pass

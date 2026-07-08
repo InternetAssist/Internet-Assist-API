@@ -65,7 +65,13 @@ def create_contact(payload):
         pass
 
     try:
-        send_confirmation(ticket_type='contact', recipient_email=contact.email, recipient_name=contact.name, ticket_ref=contact.ticket_ref)
+        send_confirmation(
+            ticket_type='contact',
+            recipient_email=contact.email,
+            recipient_name=contact.name,
+            ticket_ref=contact.ticket_ref,
+            details={'Message': contact.message, 'Company': contact.company},
+        )
     except Exception:
         pass
 
