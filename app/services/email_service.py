@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+from functools import lru_cache
 from html import escape
 from pathlib import Path
 
@@ -10,6 +11,27 @@ from flask import current_app
 
 from app.logging import logger
 from app.services import file_settings
+
+# Brand gradient (matches the site's emerald->teal CTA buttons) and logo,
+# reused as a shared header across every transactional email so they all
+# look like they came from the same place.
+_BRAND_GRADIENT = 'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)'
+_LOGO_PATH = Path(__file__).parent / 'email_assets' / 'ia-logo.png'
+
+
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    return f"data:image/png;base64,{base64.b64encode(_LOGO_PATH.read_bytes()).decode()}"
+
+
+def _email_header(title: str) -> str:
+    return f"""
+        <tr><td style="background:#ffffff;padding:28px 32px 18px;text-align:center">
+          <img src="{_logo_data_uri()}" alt="Internet Assist" width="190" style="display:inline-block;height:auto;max-width:190px">
+        </td></tr>
+        <tr><td style="background:{_BRAND_GRADIENT};padding:18px 32px">
+          <h1 style="margin:0;color:#fff;font-size:21px">{escape(title)}</h1>
+        </td></tr>"""
 
 _TICKET_COLOURS = {
     'contact':         '#2563eb',
@@ -121,12 +143,7 @@ def _build_html(ticket_type: str, ticket_id: str, fields: dict) -> str:
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0"
              style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
-        <tr>
-          <td style="background:{colour};padding:24px 32px">
-            <p style="margin:0;color:rgba(255,255,255,.8);font-size:12px;text-transform:uppercase;letter-spacing:1px">Internet Assist</p>
-            <h1 style="margin:4px 0 0;color:#fff;font-size:22px">{escape(label)}</h1>
-          </td>
-        </tr>
+        {_email_header(label)}
         <tr>
           <td style="padding:16px 32px;background:#f9fafb;border-bottom:2px solid {colour}">
             <span style="font-size:12px;color:#6b7280">Ticket&nbsp;</span>
@@ -194,6 +211,13 @@ _CONFIRMATION_CONFIG: dict[str, dict] = {
         'body':    'Our team will review your requirements and prepare a tailored proposal, usually within <strong>2 working days</strong>.',
         'subject': 'We\'ve received your quote request — Internet Assist',
     },
+    'remote_support': {
+        'colour':  '#dc2626',
+        'title':   'Remote Support Request Received',
+        'intro':   'Thank you for reaching out to Internet Assist for remote support!',
+        'body':    'A technician will pick up your request shortly, usually within <strong>30 minutes</strong> during business hours.',
+        'subject': 'We\'ve received your support request — Internet Assist',
+    },
 }
 
 
@@ -225,10 +249,7 @@ def send_confirmation(
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0"
              style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
-        <tr><td style="background:{cfg['colour']};padding:24px 32px">
-          <p style="margin:0;color:rgba(255,255,255,.8);font-size:12px;text-transform:uppercase;letter-spacing:1px">Internet Assist</p>
-          <h1 style="margin:4px 0 0;color:#fff;font-size:22px">{escape(cfg['title'])}</h1>
-        </td></tr>
+        {_email_header(cfg['title'])}
         <tr><td style="padding:32px">
           <p style="margin:0 0 16px;color:#111827">Hi {first},</p>
           <p style="margin:0 0 20px;color:#374151">{cfg['intro']}</p>
@@ -307,7 +328,6 @@ def send_job_status_update(
 
     first   = escape(recipient_name.split()[0] if recipient_name else 'there')
     colour  = cfg['colour']
-    heading = escape(cfg['heading'])
     intro   = cfg['intro'].format(position=escape(position))
     body    = cfg['body']
     subject = cfg['subject']
@@ -319,10 +339,7 @@ def send_job_status_update(
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0"
              style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)">
-        <tr><td style="background:{colour};padding:24px 32px">
-          <p style="margin:0;color:rgba(255,255,255,.8);font-size:12px;text-transform:uppercase;letter-spacing:1px">Internet Assist</p>
-          <h1 style="margin:4px 0 0;color:#fff;font-size:22px">{heading}</h1>
-        </td></tr>
+        {_email_header(cfg['heading'])}
         <tr><td style="padding:32px">
           <p style="margin:0 0 16px;color:#111827">Hi {first},</p>
           <p style="margin:0 0 20px;color:#374151">{intro}</p>

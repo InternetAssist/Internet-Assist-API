@@ -7,7 +7,7 @@ from app.extensions import db, limiter
 from app.models.quote import Quote
 from app.schemas.public import QuoteCreateSchema
 from app.services.audit_service import log_audit_action
-from app.services.email_service import send_ticket
+from app.services.email_service import send_confirmation, send_ticket
 from app.services.ticket_service import create_ticket
 from app.utils.response import envelope
 
@@ -68,6 +68,11 @@ def create_quote(payload):
             },
             user_email=quote.email,
         )
+    except Exception:
+        pass
+
+    try:
+        send_confirmation(ticket_type='quote', recipient_email=quote.email, recipient_name=quote.name, ticket_ref=quote.ticket_ref)
     except Exception:
         pass
 

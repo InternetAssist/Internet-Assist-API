@@ -7,7 +7,7 @@ from app.extensions import db, limiter
 from app.models.contact import Contact
 from app.schemas.public import RemoteSupportRequestSchema
 from app.services.audit_service import log_audit_action
-from app.services.email_service import send_ticket
+from app.services.email_service import send_confirmation, send_ticket
 from app.services.ticket_service import create_ticket
 from app.utils.response import envelope
 
@@ -59,6 +59,11 @@ def create_remote_support(payload):
             },
             user_email=contact.email,
         )
+    except Exception:
+        pass
+
+    try:
+        send_confirmation(ticket_type='remote_support', recipient_email=contact.email, recipient_name=contact.name, ticket_ref=contact.ticket_ref)
     except Exception:
         pass
 
