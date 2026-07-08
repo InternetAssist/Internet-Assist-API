@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import mimetypes
 import secrets
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 from flask import current_app
+from PIL import Image
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +20,42 @@ _CONTENT_TYPES = {
     '.webp': 'image/webp',
     '.gif':  'image/gif',
 }
+
+# Uploaded photos routinely arrive multi-megabyte (full-resolution camera/
+# screenshot output) despite only ever being displayed as small cards —
+# resize/recompress on upload so every visitor doesn't pay that cost.
+_MAX_DIMENSION = 1920
+_JPEG_QUALITY = 82
+
+# Animated GIFs would break if resized frame-by-frame here — pass through as-is.
+_RESIZABLE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+
+
+def _optimize_image(data: bytes, ext: str) -> bytes:
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            img.load()
+            if img.width > _MAX_DIMENSION or img.height > _MAX_DIMENSION:
+                img.thumbnail((_MAX_DIMENSION, _MAX_DIMENSION), Image.LANCZOS)
+
+            out = io.BytesIO()
+            if ext in ('.jpg', '.jpeg'):
+                if img.mode not in ('RGB', 'L'):
+                    img = img.convert('RGB')
+                img.save(out, format='JPEG', quality=_JPEG_QUALITY, optimize=True)
+            elif ext == '.png':
+                img.save(out, format='PNG', optimize=True)
+            elif ext == '.webp':
+                img.save(out, format='WEBP', quality=_JPEG_QUALITY)
+            else:
+                return data
+            return out.getvalue()
+    except Exception:
+        # If Pillow can't process it for any reason, fall back to the
+        # original bytes rather than blocking the upload.
+        log.warning('Image optimization failed, storing original bytes', exc_info=True)
+        return data
+
 
 _ALLOWED_DOC_EXTENSIONS = {'.pdf', '.doc', '.docx'}
 _DOC_CONTENT_TYPES = {
@@ -50,6 +88,8 @@ def save_image(data: bytes, original_ext: str) -> str:
     ext = original_ext.lower()
     if ext not in _ALLOWED_EXTENSIONS:
         raise ValueError(f'Unsupported image type: {ext}')
+    if ext in _RESIZABLE_EXTENSIONS:
+        data = _optimize_image(data, ext)
     file_id   = secrets.token_hex(16)
     file_name = f"{file_id}{ext}"
     enc_path  = _media_dir() / f"{file_name}.enc"
