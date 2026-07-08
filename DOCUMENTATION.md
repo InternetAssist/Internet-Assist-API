@@ -102,10 +102,11 @@ not a bug).
 
 **Cookie behaviour**: `JWT_COOKIE_SAMESITE` is `Lax` in dev, `None` (with
 `Secure`) in production — production serves the frontend from more than one
-registrable domain (`ia.uk` and the `ia-webdesign.com` alias), which makes
-the JWT cookie genuinely cross-*site* for one of them. CSRF protection
-comes from the CORS origin allowlist plus every state-changing route
-requiring a JSON body (a plain cross-site HTML form can't send `application/json`).
+registrable domain (`ia.uk`, `ia-host.uk`, and the `ia-webdesign.com` alias),
+which makes the JWT cookie genuinely cross-*site* for all but one of them.
+CSRF protection comes from the CORS origin allowlist plus every
+state-changing route requiring a JSON body (a plain cross-site HTML form
+can't send `application/json`).
 
 ## Environment variables
 
@@ -115,7 +116,7 @@ requiring a JSON body (a plain cross-site HTML form can't send `application/json
 | `SECRET_KEY` | prod | Flask session signing (used for the OAuth flow-state cookie). |
 | `JWT_SECRET_KEY` | prod | JWT signing secret. |
 | `DATABASE_URL` | yes | SQLAlchemy URL, e.g. `mysql+pymysql://user:pass@host:3306/db?charset=utf8mb4`. |
-| `CORS_ORIGINS` | yes | Comma-separated allowlist, e.g. `https://ia.uk,https://ticketing.ia.uk`. |
+| `CORS_ORIGINS` | yes | Comma-separated allowlist, e.g. `https://ia.uk,https://www.ia.uk,https://ia-host.uk,https://www.ia-host.uk,https://ia-webdesign.com,https://www.ia-webdesign.com,https://ticketing.ia.uk`. |
 | `FRONTEND_URL` | yes | Where OAuth redirects land (`/admin` or `/auth?error=...`). |
 | `TICKET_API_URL` | no | Base URL of the external ticket platform (Contact/Quote submissions create a ticket there). Blank = skipped gracefully. |
 | `GRAPH_TENANT_ID` / `GRAPH_CLIENT_ID` / `GRAPH_CLIENT_SECRET` | yes | Azure AD app registration ("Tech Support") — used for sending email via Graph. |
