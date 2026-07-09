@@ -67,7 +67,7 @@ def login_microsoft():
 @blp.route('/admin/login/microsoft/callback', methods=['GET'])
 @limiter.limit('10/minute')
 def microsoft_callback():
-    frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:8081')
+    frontend_url = current_app.config['FRONTEND_URL']
     flow = session.pop('ms_flow', None)
     if not flow:
         return redirect(f'{frontend_url}/auth?error=session_expired')

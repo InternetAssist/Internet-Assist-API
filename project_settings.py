@@ -44,7 +44,9 @@ class BaseConfig:
     # Rate limiting — uses in-memory store by default; set REDIS_URL for multi-worker
     RATELIMIT_STORAGE_URI = os.getenv('REDIS_URL', 'memory://')
 
-    _default_cors_origins = 'http://localhost:5173,https://internet-assist.vercel.app'
+    # Dev-only fallback so a fresh clone works without an .env — production
+    # must set CORS_ORIGINS explicitly (enforced by ProductionConfig.validate).
+    _default_cors_origins = '' if _is_production else 'http://localhost:5173,https://internet-assist.vercel.app'
     CORS_ORIGINS = [
         origin.strip()
         for origin in os.getenv('CORS_ORIGINS', _default_cors_origins).split(',')
@@ -82,7 +84,9 @@ class BaseConfig:
     # for the cookie to survive that top-level cross-site redirect.
     SESSION_COOKIE_SAMESITE = 'Lax'
 
-    FRONTEND_URL         = os.getenv('FRONTEND_URL', 'http://localhost:8081')
+    # Dev-only fallback — production must set FRONTEND_URL explicitly
+    # (enforced by ProductionConfig.validate).
+    FRONTEND_URL         = os.getenv('FRONTEND_URL', '' if _is_production else 'http://localhost:8081')
     UPLOAD_FOLDER        = str(Path('/tmp') / 'internet-assist-uploads')
     MEDIA_UPLOAD_DIR     = os.getenv('MEDIA_UPLOAD_DIR', str(Path(tempfile.gettempdir()) / 'ia-media'))
     # Company installer files (NinjaOne MSIs etc) can be much larger than
@@ -137,6 +141,12 @@ class ProductionConfig(BaseConfig):
             raise RuntimeError('MEDIA_ENCRYPTION_KEY must be set in production')
         if not os.getenv('DATABASE_URL'):
             raise RuntimeError('DATABASE_URL must be set in production')
+        if not os.getenv('CORS_ORIGINS'):
+            raise RuntimeError('CORS_ORIGINS must be set in production')
+        if not os.getenv('FRONTEND_URL'):
+            raise RuntimeError('FRONTEND_URL must be set in production')
+        if 'localhost' in os.getenv('CORS_ORIGINS', '') or 'localhost' in os.getenv('FRONTEND_URL', ''):
+            raise RuntimeError('CORS_ORIGINS/FRONTEND_URL must not contain localhost in production')
 
 
 config_by_name = {
