@@ -18,6 +18,7 @@ from app.schemas.public import JobApplicationFormSchema
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_ticket_with_attachments, send_confirmation
 from app.services.media_service import save_document, load_document
+from app.services.recaptcha_service import verify_recaptcha
 from app.utils.response import envelope
 
 blp = Blueprint('public-jobs', __name__, description='Job applications')
@@ -27,7 +28,7 @@ blp = Blueprint('public-jobs', __name__, description='Job applications')
 @blp.arguments(JobApplicationFormSchema, location='form')
 @limiter.limit('5/minute')
 def create_job(payload):
-    if payload.get('website'):
+    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr):
         return envelope(data={'id': uuid4().hex, 'status': 'new'}, status=201)
 
     upload = request.files.get('cv')

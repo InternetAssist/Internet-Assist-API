@@ -68,6 +68,11 @@ class BaseConfig:
     AI_MODEL_NAME = os.getenv('AI_MODEL_NAME', 'gemini-flash-latest')
     AI_API_KEY    = os.getenv('AI_API_KEY', '')
 
+    # reCAPTCHA v3 -- second layer of bot protection on public forms, on top
+    # of the honeypot field. Blank = verification is skipped gracefully
+    # (lets local dev/testing work without needing real Google API keys).
+    RECAPTCHA_SECRET_KEY = os.getenv('RECAPTCHA_SECRET_KEY', '')
+
     # "Sign in with Microsoft" admin login — reuses the same Azure AD app
     # registration as GRAPH_* above (already used for sending email) unless
     # overridden. Access is gated on holding the ia-support-admin App Role on

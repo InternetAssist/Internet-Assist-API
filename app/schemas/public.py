@@ -21,6 +21,11 @@ class ChatResponseSchema(BaseSchema):
 # reject a legitimate submission for omitting it.
 _website_honeypot = fields.String(load_default='', allow_none=True, validate=validate.Length(max=255))
 
+# reCAPTCHA v3 token -- optional here too; verify_recaptcha() itself decides
+# whether a missing/failing token blocks the submission (skipped entirely
+# when RECAPTCHA_SECRET_KEY isn't configured, e.g. local dev).
+_recaptcha_token = fields.String(load_default='', allow_none=True, validate=validate.Length(max=4096))
+
 
 class ContactCreateSchema(BaseSchema):
     name = fields.String(required=True, validate=validate.Length(min=2, max=200))
@@ -29,6 +34,7 @@ class ContactCreateSchema(BaseSchema):
     company = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
     message = fields.String(required=True, validate=validate.Length(min=10, max=5000))
     website = _website_honeypot
+    recaptcha_token = _recaptcha_token
 
 
 class QuoteCreateSchema(BaseSchema):
@@ -45,6 +51,7 @@ class QuoteCreateSchema(BaseSchema):
     timeline = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
     details = fields.String(required=True, validate=validate.Length(min=10, max=5000))
     website = _website_honeypot
+    recaptcha_token = _recaptcha_token
 
 
 class JobApplicationFormSchema(BaseSchema):
@@ -59,6 +66,7 @@ class JobApplicationFormSchema(BaseSchema):
         validate=validate.Length(max=5000),
     )
     website = _website_honeypot
+    recaptcha_token = _recaptcha_token
 
 
 class RemoteSupportRequestSchema(BaseSchema):
@@ -67,3 +75,4 @@ class RemoteSupportRequestSchema(BaseSchema):
     phone = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=50))
     issue = fields.String(required=True, validate=validate.Length(min=5, max=5000))
     website = _website_honeypot
+    recaptcha_token = _recaptcha_token

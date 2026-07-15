@@ -10,6 +10,7 @@ from app.models.contact import Contact
 from app.schemas.public import RemoteSupportRequestSchema
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_confirmation, send_ticket
+from app.services.recaptcha_service import verify_recaptcha
 from app.services.ticket_service import create_ticket
 from app.utils.response import envelope
 
@@ -20,7 +21,7 @@ blp = Blueprint('public-remote-support', __name__, description='Remote support r
 @blp.arguments(RemoteSupportRequestSchema)
 @limiter.limit('5/minute')
 def create_remote_support(payload):
-    if payload.get('website'):
+    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr):
         return envelope(data={'id': uuid4().hex, 'status': 'new', 'ticket_ref': None}, status=201)
 
     contact = Contact(
