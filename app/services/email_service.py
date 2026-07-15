@@ -3,12 +3,11 @@ from __future__ import annotations
 import base64
 import mimetypes
 from datetime import datetime
-from functools import lru_cache
 from html import escape
 from pathlib import Path
 
 import requests
-from flask import current_app
+from flask import current_app, request
 
 from app.logging import logger
 from app.services import file_settings
@@ -24,18 +23,22 @@ _BRAND_GRADIENT = 'linear-gradient(135deg, #10b981 0%, #14b8a6 100%)'
 # is the CSS fallback for every other client that ignores bgcolor.
 _BRAND_SOLID = '#0d9488'
 _BRAND_BG = f'bgcolor="{_BRAND_SOLID}" style="background-color:{_BRAND_SOLID};background:{_BRAND_GRADIENT}'
-_LOGO_PATH = Path(__file__).parent / 'email_assets' / 'ia-logo.png'
+# Exposed via a dedicated Flask route (see health blueprint) rather than
+# embedded as a base64 data: URI -- Gmail and several other major clients
+# strip/refuse to render data: URI images in HTML email entirely, which is
+# why the logo was invisible in confirmation emails despite rendering fine
+# everywhere else (browser previews, our own inbox on the same M365 tenant).
+LOGO_PATH = Path(__file__).parent / 'email_assets' / 'ia-logo.png'
 
 
-@lru_cache(maxsize=1)
-def _logo_data_uri() -> str:
-    return f"data:image/png;base64,{base64.b64encode(_LOGO_PATH.read_bytes()).decode()}"
+def _logo_url() -> str:
+    return f"{request.host_url.rstrip('/')}/assets/email-logo.png"
 
 
 def _email_header(title: str) -> str:
     return f"""
         <tr><td style="background:#ffffff;padding:28px 24px 18px;text-align:center">
-          <img src="{_logo_data_uri()}" alt="Internet Assist" width="190" style="display:inline-block;height:auto;max-width:190px">
+          <img src="{_logo_url()}" alt="Internet Assist" width="190" style="display:inline-block;height:auto;max-width:190px">
         </td></tr>
         <tr><td {_BRAND_BG};padding:18px 24px">
           <h1 style="margin:0;color:#fff;font-size:21px">{escape(title)}</h1>
@@ -148,7 +151,7 @@ def _build_html(ticket_type: str, ticket_id: str, fields: dict) -> str:
       <table width="100%" cellpadding="0" cellspacing="0"
              style="background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 10px 40px -12px rgba(15,23,42,.15)">
         <tr><td style="background:#ffffff;padding:32px 24px 16px;text-align:center">
-          <img src="{_logo_data_uri()}" alt="Internet Assist" width="180" style="display:inline-block;height:auto;max-width:180px">
+          <img src="{_logo_url()}" alt="Internet Assist" width="180" style="display:inline-block;height:auto;max-width:180px">
         </td></tr>
         <tr><td {_BRAND_BG};padding:36px 24px;text-align:center">
           <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px">
@@ -321,7 +324,7 @@ def send_confirmation(
       <table width="100%" cellpadding="0" cellspacing="0"
              style="background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 10px 40px -12px rgba(15,23,42,.15)">
         <tr><td style="background:#ffffff;padding:32px 24px 16px;text-align:center">
-          <img src="{_logo_data_uri()}" alt="Internet Assist" width="180" style="display:inline-block;height:auto;max-width:180px">
+          <img src="{_logo_url()}" alt="Internet Assist" width="180" style="display:inline-block;height:auto;max-width:180px">
         </td></tr>
         <tr><td {_BRAND_BG};padding:36px 24px;text-align:center">
           <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px">

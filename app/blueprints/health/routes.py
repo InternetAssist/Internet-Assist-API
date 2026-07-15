@@ -4,10 +4,11 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-from flask import Blueprint, current_app, render_template_string
+from flask import Blueprint, current_app, render_template_string, send_file
 from sqlalchemy import text
 
 from app.extensions import db
+from app.services.email_service import LOGO_PATH
 from app.utils.response import envelope
 
 blp = Blueprint('health', __name__)
@@ -172,3 +173,12 @@ def readyz():
     db.session.execute(text('SELECT 1'))
     # Don't expose environment name in production responses
     return envelope(data={'status': 'ready'}, status=200)
+
+
+@blp.route('/assets/email-logo.png')
+def email_logo():
+    # Served from a stable URL for transactional emails to reference directly
+    # -- Gmail and other major clients strip base64 data: URI images from
+    # HTML email entirely, so the logo must be a real, publicly reachable
+    # image URL instead.
+    return send_file(LOGO_PATH, mimetype='image/png', max_age=86400 * 30)
