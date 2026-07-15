@@ -87,6 +87,8 @@ def create_app() -> Flask:
     from app.blueprints.public.job_routes import blp as job_blp
     from app.blueprints.public.job_posting_routes import blp as job_posting_blp
     from app.blueprints.public.remote_support_routes import blp as remote_support_blp
+    from app.blueprints.public.blog_routes import blp as blog_blp
+    from app.blueprints.public.sitemap_routes import blp as sitemap_blp
     from app.blueprints.admin.routes import blp as admin_blp
     from app.blueprints.health.routes import blp as health_blp
     from app.blueprints.settings.routes import blp as settings_blp
@@ -98,6 +100,8 @@ def create_app() -> Flask:
     api.register_blueprint(job_blp)
     api.register_blueprint(job_posting_blp)
     api.register_blueprint(remote_support_blp)
+    api.register_blueprint(blog_blp)
+    api.register_blueprint(sitemap_blp)
     api.register_blueprint(admin_blp)
     app.register_blueprint(health_blp)
     app.register_blueprint(media_blp)

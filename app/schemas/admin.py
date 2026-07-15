@@ -60,6 +60,33 @@ class ProjectPatchSchema(Schema):
     status      = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(['draft', 'published']))
 
 
+class BlogPostCreateSchema(BaseSchema):
+    title       = fields.String(required=True, validate=validate.Length(min=2, max=255))
+    slug        = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
+    excerpt     = fields.String(load_default=None, allow_none=True)
+    body        = fields.String(required=True, validate=validate.Length(min=10))
+    author_name = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=150))
+    tags        = fields.List(fields.String(), load_default=list)
+    cover_image_url = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=1024))
+    status      = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(['draft', 'published']))
+
+
+class BlogPostPatchSchema(Schema):
+    """Lenient schema for PATCH /admin/blog/:id.
+    All fields optional, no strict min-lengths, unknown keys are silently dropped."""
+    class Meta:
+        unknown = EXCLUDE
+
+    title       = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
+    slug        = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
+    excerpt     = fields.String(load_default=None, allow_none=True)
+    body        = fields.String(load_default=None, allow_none=True)
+    author_name = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=150))
+    tags        = fields.List(fields.String(), load_default=None, allow_none=True)
+    cover_image_url = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=1024))
+    status      = fields.String(load_default=None, allow_none=True, validate=validate.OneOf(['draft', 'published']))
+
+
 class CompanyCreateSchema(BaseSchema):
     name  = fields.String(required=True, validate=validate.Length(min=2, max=255))
     notes = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=2000))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from flask import abort, current_app, g, make_response, redirect, request, session, url_for
@@ -10,6 +11,7 @@ from sqlalchemy import func, or_
 from app.extensions import db, jwt, limiter
 from app.models.token_blacklist import TokenBlacklist
 from app.models.audit_log import AuditLog
+from app.models.blog_post import BlogPost
 from app.models.company import Company
 from app.models.company_file import CompanyFile
 from app.models.contact import Contact
@@ -18,6 +20,7 @@ from app.models.job_posting import JobPosting
 from app.models.project import Project
 from app.models.quote import Quote
 from app.schemas.admin import (
+    BlogPostCreateSchema, BlogPostPatchSchema,
     CompanyCreateSchema, CompanyFilePatchSchema, CompanyFileUploadSchema, CompanyPatchSchema,
     JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
@@ -774,6 +777,189 @@ def upload_project_image(project_id):
         ip=request.remote_addr,
     )
     return envelope(data=_serialize_project(proj), status=200)
+
+
+# ── Blog ───────────────────────────────────────────────────────────────────────
+
+_SLUG_RE = re.compile(r'[^a-z0-9]+')
+
+
+def _slugify(value: str) -> str:
+    slug = _SLUG_RE.sub('-', value.lower()).strip('-')
+    return slug or 'post'
+
+
+def _unique_slug(base_slug: str, exclude_id: str | None = None) -> str:
+    slug = base_slug
+    suffix = 2
+    while True:
+        query = BlogPost.query.filter_by(slug=slug)
+        if exclude_id:
+            query = query.filter(BlogPost.id != exclude_id)
+        if not query.first():
+            return slug
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
+
+
+def _blog_cover_image_url(p: BlogPost) -> str | None:
+    if p.cover_image_file_id:
+        host = request.host_url.split('://', 1)[-1].rstrip('/')
+        scheme = 'https' if current_app.config.get('APP_ENV') == 'production' else request.scheme
+        return f"{scheme}://{host}/media/blog/{p.cover_image_file_id}"
+    return p.cover_image_url or None
+
+
+def _serialize_blog_post(p: BlogPost) -> dict:
+    return {
+        'id':                  p.id,
+        'title':               p.title,
+        'slug':                p.slug,
+        'excerpt':             p.excerpt,
+        'body':                p.body,
+        'author_name':         p.author_name,
+        'tags':                p.tags or [],
+        'cover_image_url':     _blog_cover_image_url(p),
+        'cover_image_file_id': p.cover_image_file_id,
+        'status':              p.status,
+        'published_at':        p.published_at.isoformat() if p.published_at else None,
+        'created_at':          p.created_at.isoformat(),
+        'updated_at':          p.updated_at.isoformat(),
+    }
+
+
+@blp.route('/admin/blog')
+@roles_required('admin')
+@blp.arguments(PaginationQuerySchema, location='query')
+def list_blog_posts(payload):
+    query = BlogPost.query
+    if payload.get('status'):
+        query = query.filter(BlogPost.status == payload['status'])
+    else:
+        query = query.filter(BlogPost.status != 'archived')
+    if payload.get('q'):
+        qstr = f"%{payload['q']}%"
+        query = query.filter(or_(BlogPost.title.ilike(qstr), BlogPost.excerpt.ilike(qstr)))
+    items, meta = _paginate(query.order_by(BlogPost.created_at.desc()), payload['page'], payload['page_size'])
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_list_blog_posts', entity='blog_post', ip=request.remote_addr)
+    return envelope(data=[_serialize_blog_post(p) for p in items], meta=meta, status=200)
+
+
+@blp.route('/admin/blog', methods=['POST'])
+@roles_required('admin')
+@blp.arguments(BlogPostCreateSchema)
+def create_blog_post(payload):
+    status = payload.get('status') or 'draft'
+    base_slug = _slugify(payload.get('slug') or payload['title'])
+    post = BlogPost(
+        title=payload['title'],
+        slug=_unique_slug(base_slug),
+        excerpt=payload.get('excerpt'),
+        body=payload['body'],
+        author_name=payload.get('author_name'),
+        tags=payload.get('tags') or [],
+        cover_image_url=payload.get('cover_image_url'),
+        status=status,
+        published_at=datetime.now(timezone.utc) if status == 'published' else None,
+    )
+    db.session.add(post)
+    db.session.commit()
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_create_blog_post', entity='blog_post', entity_id=post.id, ip=request.remote_addr)
+    return envelope(data=_serialize_blog_post(post), status=201)
+
+
+@blp.route('/admin/blog/<string:post_id>', methods=['PATCH'])
+@roles_required('admin')
+@blp.arguments(BlogPostPatchSchema())
+def patch_blog_post(payload, post_id):
+    post = db.session.get(BlogPost, post_id)
+    if not post:
+        return envelope(error={'code': 'not_found', 'message': 'Blog post not found', 'details': None}, status=404)
+
+    sent_keys = set((request.get_json(silent=True) or {}).keys())
+
+    # Slug is only regenerated when explicitly sent — editing the title later
+    # must not silently change a post's URL.
+    if 'slug' in sent_keys and payload.get('slug'):
+        post.slug = _unique_slug(_slugify(payload['slug']), exclude_id=post_id)
+
+    for field in ('title', 'excerpt', 'body', 'author_name', 'tags', 'cover_image_url'):
+        if field in sent_keys:
+            setattr(post, field, payload.get(field))
+
+    if 'status' in sent_keys and payload.get('status'):
+        old_status = post.status
+        post.status = payload['status']
+        if old_status != 'published' and post.status == 'published' and not post.published_at:
+            post.published_at = datetime.now(timezone.utc)
+
+    db.session.commit()
+    log_audit_action(actor_user_id=g.current_user.id, action='admin_update_blog_post', entity='blog_post', entity_id=post_id, ip=request.remote_addr)
+    return envelope(data=_serialize_blog_post(post), status=200)
+
+
+@blp.route('/admin/blog/<string:post_id>', methods=['DELETE'])
+@roles_required('admin')
+def delete_blog_post(post_id):
+    post = db.session.get(BlogPost, post_id)
+    if not post:
+        return envelope(error={'code': 'not_found', 'message': 'Blog post not found', 'details': None}, status=404)
+    old_status = post.status
+    post.status = 'archived'
+    db.session.commit()
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_archive_blog_post',
+        entity='blog_post',
+        entity_id=post_id,
+        diff={'status': {'old': old_status, 'new': 'archived'}},
+        ip=request.remote_addr,
+    )
+    return envelope(data={'id': post_id}, status=200)
+
+
+@blp.route('/admin/blog/<string:post_id>/image', methods=['POST'])
+@roles_required('admin')
+def upload_blog_cover_image(post_id):
+    post = db.session.get(BlogPost, post_id)
+    if not post:
+        return envelope(error={'code': 'not_found', 'message': 'Blog post not found', 'details': None}, status=404)
+
+    upload = request.files.get('image')
+    if not upload or not upload.filename:
+        return envelope(error={'code': 'no_file', 'message': 'No image file provided.', 'details': None}, status=400)
+
+    from pathlib import Path as _Path
+    from werkzeug.utils import secure_filename
+    ext = _Path(secure_filename(upload.filename)).suffix.lower()
+    if ext not in {'.jpg', '.jpeg', '.png', '.webp', '.gif'}:
+        return envelope(error={'code': 'invalid_type', 'message': 'Image must be JPG, PNG, WebP, or GIF.', 'details': None}, status=422)
+
+    data = upload.read()
+    if len(data) > 8 * 1024 * 1024:
+        return envelope(error={'code': 'file_too_large', 'message': 'Image must be under 8 MB.', 'details': None}, status=413)
+
+    if post.cover_image_file_id:
+        delete_image(post.cover_image_file_id)
+
+    try:
+        file_name = save_image(data, ext)
+    except Exception:
+        return envelope(error={'code': 'upload_failed', 'message': 'Failed to store image.', 'details': None}, status=500)
+
+    post.cover_image_file_id = file_name
+    post.cover_image_url = None  # clear any external URL
+    db.session.commit()
+
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_upload_blog_cover_image',
+        entity='blog_post',
+        entity_id=post_id,
+        diff={'file': file_name},
+        ip=request.remote_addr,
+    )
+    return envelope(data=_serialize_blog_post(post), status=200)
 
 
 # ── Companies & their installer files (e.g. per-client NinjaOne MSIs) ─────────
