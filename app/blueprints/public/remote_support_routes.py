@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from flask import request
 from flask_smorest import Blueprint
 
@@ -18,6 +20,9 @@ blp = Blueprint('public-remote-support', __name__, description='Remote support r
 @blp.arguments(RemoteSupportRequestSchema)
 @limiter.limit('5/minute')
 def create_remote_support(payload):
+    if payload.get('website'):
+        return envelope(data={'id': uuid4().hex, 'status': 'new', 'ticket_ref': None}, status=201)
+
     contact = Contact(
         name=payload['name'],
         email=payload['email'].lower(),

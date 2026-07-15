@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from flask import request
 from flask_smorest import Blueprint
 
@@ -18,6 +20,9 @@ blp = Blueprint('public-quotes', __name__, description='Quote requests')
 @blp.arguments(QuoteCreateSchema)
 @limiter.limit('10/minute')
 def create_quote(payload):
+    if payload.get('website'):
+        return envelope(data={'id': uuid4().hex, 'status': 'pending', 'ticket_ref': None}, status=201)
+
     quote = Quote(
         name=payload['name'],
         email=payload['email'].lower(),

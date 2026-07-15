@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from uuid import uuid4
 
 from flask import request
 
@@ -26,6 +27,9 @@ blp = Blueprint('public-jobs', __name__, description='Job applications')
 @blp.arguments(JobApplicationFormSchema, location='form')
 @limiter.limit('5/minute')
 def create_job(payload):
+    if payload.get('website'):
+        return envelope(data={'id': uuid4().hex, 'status': 'new'}, status=201)
+
     upload = request.files.get('cv')
     cv_file_name = None
     cv_original_name = None

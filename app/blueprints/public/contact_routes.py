@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from flask import request
 from flask_smorest import Blueprint
 
@@ -18,6 +20,11 @@ blp = Blueprint('public-contact', __name__, description='Contact submissions')
 @blp.arguments(ContactCreateSchema)
 @limiter.limit('10/minute')
 def create_contact(payload):
+    # Honeypot tripped -- pretend success so the bot doesn't adjust its
+    # behaviour, but skip the DB write and every email entirely.
+    if payload.get('website'):
+        return envelope(data={'id': uuid4().hex, 'status': 'new', 'ticket_ref': None}, status=201)
+
     contact = Contact(
         name=payload['name'],
         email=payload['email'].lower(),

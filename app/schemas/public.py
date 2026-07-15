@@ -15,12 +15,20 @@ class ChatResponseSchema(BaseSchema):
     type = fields.String(required=True)
 
 
+# Honeypot: a field real users never see or fill (hidden off-screen in the
+# frontend), so any non-empty value here means the submitter is a bot blindly
+# filling every input it finds. Optional/lenient on purpose -- it must never
+# reject a legitimate submission for omitting it.
+_website_honeypot = fields.String(load_default='', allow_none=True, validate=validate.Length(max=255))
+
+
 class ContactCreateSchema(BaseSchema):
     name = fields.String(required=True, validate=validate.Length(min=2, max=200))
     email = fields.Email(required=True)
     phone = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=50))
     company = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
     message = fields.String(required=True, validate=validate.Length(min=10, max=5000))
+    website = _website_honeypot
 
 
 class QuoteCreateSchema(BaseSchema):
@@ -36,6 +44,7 @@ class QuoteCreateSchema(BaseSchema):
     team_size = fields.Integer(load_default=None, allow_none=True, validate=validate.Range(min=1, max=100000))
     timeline = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=255))
     details = fields.String(required=True, validate=validate.Length(min=10, max=5000))
+    website = _website_honeypot
 
 
 class JobApplicationFormSchema(BaseSchema):
@@ -49,6 +58,7 @@ class JobApplicationFormSchema(BaseSchema):
         allow_none=True,
         validate=validate.Length(max=5000),
     )
+    website = _website_honeypot
 
 
 class RemoteSupportRequestSchema(BaseSchema):
@@ -56,3 +66,4 @@ class RemoteSupportRequestSchema(BaseSchema):
     email = fields.Email(required=True)
     phone = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=50))
     issue = fields.String(required=True, validate=validate.Length(min=5, max=5000))
+    website = _website_honeypot
