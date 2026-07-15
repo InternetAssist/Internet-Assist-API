@@ -19,7 +19,7 @@ from app.services.audit_service import log_audit_action
 from app.services.email_service import send_ticket_with_attachments, send_confirmation
 from app.services.media_service import save_document, load_document
 from app.services.recaptcha_service import verify_recaptcha
-from app.utils.response import envelope
+from app.utils.response import envelope, error_envelope
 
 blp = Blueprint('public-jobs', __name__, description='Job applications')
 
@@ -32,19 +32,18 @@ def create_job(payload):
         return envelope(data={'id': uuid4().hex, 'status': 'new'}, status=201)
 
     upload = request.files.get('cv')
-    cv_file_name = None
-    cv_original_name = None
-    if upload and upload.filename:
-        ext = Path(secure_filename(upload.filename)).suffix.lower()
-        if ext not in _ALLOWED_CV_EXTENSIONS:
-            from app.utils.response import error_envelope
-            return error_envelope('invalid_file', 'CV must be a PDF, DOC, or DOCX file.', None, 422)
-        cv_original_name = secure_filename(upload.filename)
-        try:
-            cv_file_name = save_document(upload.read(), ext)
-        except Exception as exc:
-            log.error('CV save failed for applicant %s: %s', payload.get('email'), exc, exc_info=True)
-            cv_file_name = None
+    if not upload or not upload.filename:
+        return error_envelope('cv_required', 'Please attach your CV.', None, 422)
+
+    ext = Path(secure_filename(upload.filename)).suffix.lower()
+    if ext not in _ALLOWED_CV_EXTENSIONS:
+        return error_envelope('invalid_file', 'CV must be a PDF, DOC, or DOCX file.', None, 422)
+    cv_original_name = secure_filename(upload.filename)
+    try:
+        cv_file_name = save_document(upload.read(), ext)
+    except Exception as exc:
+        log.error('CV save failed for applicant %s: %s', payload.get('email'), exc, exc_info=True)
+        cv_file_name = None
 
     application = JobApplication(
         full_name=payload['full_name'],
@@ -64,7 +63,7 @@ def create_job(payload):
         'Phone':        application.phone,
         'Position':     application.position,
         'Cover Letter': application.cover_letter,
-        'CV':           cv_original_name or 'Not provided',
+        'CV':           cv_original_name,
     }
 
     # Notify HR via internal email with CV attached (best-effort)
