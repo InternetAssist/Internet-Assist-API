@@ -44,5 +44,14 @@ def verify_recaptcha(token: str, remote_ip: str | None = None) -> bool:
         return True
 
     if not data.get('success'):
+        log.warning(
+            'reCAPTCHA verification rejected: error-codes=%s',
+            data.get('error-codes'),
+        )
         return False
-    return data.get('score', 0.0) >= _SCORE_THRESHOLD
+
+    score = data.get('score', 0.0)
+    if score < _SCORE_THRESHOLD:
+        log.warning('reCAPTCHA score too low: score=%s action=%s', score, data.get('action'))
+        return False
+    return True
