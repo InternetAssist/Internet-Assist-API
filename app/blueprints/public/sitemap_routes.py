@@ -39,6 +39,8 @@ _STATIC_URLS = [
     ('/locations/south-woodham-ferrers', 'monthly', '0.6'),
     ('/locations/tiptree', 'monthly', '0.6'),
     ('/locations/colchester', 'monthly', '0.6'),
+    ('/locations/billericay', 'monthly', '0.6'),
+    ('/locations/basildon', 'monthly', '0.6'),
     # '/blog' hub intentionally omitted until there's published content —
     # an empty index page isn't worth submitting for indexing yet.
 ]
