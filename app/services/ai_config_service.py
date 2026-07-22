@@ -10,7 +10,9 @@ _KEY = 'ai_config'
 
 def is_configured() -> bool:
     stored = SiteSetting.get(_KEY, {}) or {}
-    return bool(stored.get('api_key_encrypted'))
+    if stored.get('api_key_encrypted'):
+        return True
+    return bool(current_app.config.get('AI_API_KEY'))
 
 
 def set_api_key(api_key: str) -> None:
