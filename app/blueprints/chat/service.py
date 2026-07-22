@@ -8,7 +8,7 @@ from app.extensions import db
 from app.logging import logger
 from app.models.chat_message import ChatMessage
 from app.models.chat_session import ChatSession
-from app.services import ai_config_service
+from app.services import ai_config_service, chat_cache_service
 from app.services.audit_service import log_audit_action
 from app.services.ticket_service import create_ticket
 
@@ -210,48 +210,88 @@ def process_message(
     action = None
     action_payload = None
     intent = 'ai'
+    cache_hit = None
 
-    try:
-        result = call_ai(
-            message,
-            history=history,
-            model_name=current_app.config['AI_MODEL_NAME'],
-            api_key=ai_config_service.resolve_api_key(),
-        )
-        reply = result.get('reply', '')
-        ai_action = result.get('action')
+    # Only trust the cache for a context-free question -- the first message
+    # in the session, with no prior turns it might be a follow-up to. A
+    # cached reply was generated in isolation, so reusing it for something
+    # that depends on earlier conversation context could answer the wrong
+    # thing.
+    if len(history) <= 1:
+        cache_hit = chat_cache_service.find_cached_reply(message)
+
+    if cache_hit:
+        chat_cache_service.record_hit(cache_hit)
+        reply = cache_hit.reply
+        ai_action = cache_hit.action
+        cached_payload = cache_hit.action_payload
 
         if ai_action == 'show_form':
-            form_key = result.get('form', '')
+            form_key = (cached_payload or {}).get('form_type', '')
             form_def = FORMS.get(form_key)
             if form_def:
                 action = 'show_form'
                 action_payload = form_def
                 intent = form_key
+        elif ai_action == 'redirect':
+            action = 'redirect'
+            action_payload = cached_payload
+            intent = 'redirect'
+
+    else:
+        try:
+            result = call_ai(
+                message,
+                history=history,
+                model_name=current_app.config['AI_MODEL_NAME'],
+                api_key=ai_config_service.resolve_api_key(),
+            )
+            reply = result.get('reply', '')
+            ai_action = result.get('action')
+            cache_action_payload = None
+
+            if ai_action == 'show_form':
+                form_key = result.get('form', '')
+                form_def = FORMS.get(form_key)
+                if form_def:
+                    action = 'show_form'
+                    action_payload = form_def
+                    intent = form_key
+                    cache_action_payload = form_def
+                else:
+                    intent = 'ai'
+
+            elif ai_action == 'redirect':
+                action = 'redirect'
+                action_payload = {
+                    'url':   result.get('url', '/'),
+                    'label': result.get('label', 'Go'),
+                }
+                intent = 'redirect'
+                cache_action_payload = action_payload
+
             else:
                 intent = 'ai'
 
-        elif ai_action == 'redirect':
-            action = 'redirect'
-            action_payload = {
-                'url':   result.get('url', '/'),
-                'label': result.get('label', 'Go'),
-            }
-            intent = 'redirect'
+            if len(history) <= 1:
+                chat_cache_service.store_reply(
+                    message=message,
+                    reply=reply,
+                    action=action,
+                    action_payload=cache_action_payload,
+                    model_name=current_app.config['AI_MODEL_NAME'],
+                )
 
-        else:
-            intent = 'ai'
-
-    except Exception:
-        reply = (
-            'I am sorry, I could not process that right now. '
-            f'Please call **{current_app.config["PUBLIC_CONTACT_PHONE"]}** or email '
-            f'**{current_app.config["PUBLIC_CONTACT_EMAIL"]}**.'
-        )
+        except Exception:
+            reply = (
+                'I am sorry, I could not process that right now. '
+                f'Please call **{current_app.config["PUBLIC_CONTACT_PHONE"]}** or email '
+                f'**{current_app.config["PUBLIC_CONTACT_EMAIL"]}**.'
+            )
 
     _append_assistant(session, reply)
     db.session.commit()
-    logger.info('chat_processed', session_id=session.id, intent=intent, action=action)
+    logger.info('chat_processed', session_id=session.id, intent=intent, action=action, cached=bool(cache_hit))
 
     return {
         'reply': reply,
