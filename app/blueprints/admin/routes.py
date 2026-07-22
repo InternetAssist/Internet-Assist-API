@@ -566,11 +566,11 @@ def stats():
     quotes = {row[0]: row[1] for row in db.session.query(Quote.status, func.count(Quote.id)).group_by(Quote.status).all()}
     jobs = {row[0]: row[1] for row in db.session.query(JobApplication.status, func.count(JobApplication.id)).group_by(JobApplication.status).all()}
     totals = {
-        'contacts': Contact.query.count(),
-        'quotes': Quote.query.count(),
-        'jobs': JobApplication.query.count(),
+        'contacts': Contact.query.filter(Contact.status != 'archived').count(),
+        'quotes': Quote.query.filter(Quote.status != 'archived').count(),
+        'jobs': JobApplication.query.filter(JobApplication.status != 'archived').count(),
         'postings': JobPosting.query.count(),
-        'projects': Project.query.count(),
+        'projects': Project.query.filter(Project.status != 'archived').count(),
     }
     log_audit_action(actor_user_id=g.current_user.id, action='admin_view_stats', entity='stats', ip=request.remote_addr)
     return envelope(data={'contacts': contacts, 'quotes': quotes, 'jobs': jobs, 'totals': totals}, status=200)
