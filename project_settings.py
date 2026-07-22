@@ -101,7 +101,7 @@ class BaseConfig:
     COMPANY_FILES_DIR    = os.getenv('COMPANY_FILES_DIR', '')
     MEDIA_ENCRYPTION_KEY = os.getenv('MEDIA_ENCRYPTION_KEY', '')
     SITE_SETTINGS_DIR    = os.getenv('SITE_SETTINGS_DIR', str(Path(tempfile.gettempdir()) / 'ia-site-settings'))
-    PUBLIC_CONTACT_EMAIL = os.getenv('PUBLIC_CONTACT_EMAIL', 'enquiries@internetassist.co.uk')
+    PUBLIC_CONTACT_EMAIL = os.getenv('PUBLIC_CONTACT_EMAIL', 'enquiries@ia.uk')
     PUBLIC_CONTACT_PHONE = os.getenv('PUBLIC_CONTACT_PHONE', '01621 840014')
     TICKET_API_URL       = os.getenv('TICKET_API_URL', '')
 

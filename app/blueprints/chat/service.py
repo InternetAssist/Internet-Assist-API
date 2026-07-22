@@ -156,7 +156,7 @@ def _handle_ticket_flow(session: ChatSession, message: str, ip: str | None) -> d
                          entity_id=ticket.get('ticket_id'), ip=ip)
     else:
         reply = ("Sorry, I couldn't create the ticket right now. "
-                 "Please contact us directly at **enquiries@internetassist.co.uk** or **01621 840014**.")
+                 "Please contact us directly at **enquiries@ia.uk** or **01621 840014**.")
 
     session.ticket_flow_state = None
     session.ticket_flow_data = None
