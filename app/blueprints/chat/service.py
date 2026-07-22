@@ -12,7 +12,9 @@ from app.services import ai_config_service, chat_cache_service
 from app.services.audit_service import log_audit_action
 from app.services.ticket_service import create_ticket
 
-from .ai_gateway import call_ai
+from .ai_gateway import _RATE_LIMITED, call_ai
+
+_RATE_LIMITED_REPLY = _RATE_LIMITED['reply']
 
 # ── Inline form definitions ───────────────────────────────────────────────────
 
@@ -250,6 +252,15 @@ def process_message(
             ai_action = result.get('action')
             cache_action_payload = None
 
+            # call_ai() returns the rate-limited fallback as a normal
+            # (non-exception) result once retries are exhausted, so a
+            # successful *call* isn't the same as a successful *reply* --
+            # check the actual content before recording this as "working".
+            if reply == _RATE_LIMITED_REPLY:
+                ai_config_service.record_call_result(False, 'rate_limited')
+            else:
+                ai_config_service.record_call_result(True)
+
             if ai_action == 'show_form':
                 form_key = result.get('form', '')
                 form_def = FORMS.get(form_key)
@@ -282,7 +293,8 @@ def process_message(
                     model_name=current_app.config['AI_MODEL_NAME'],
                 )
 
-        except Exception:
+        except Exception as exc:
+            ai_config_service.record_call_result(False, str(exc)[:200])
             reply = (
                 'I am sorry, I could not process that right now. '
                 f'Please call **{current_app.config["PUBLIC_CONTACT_PHONE"]}** or email '

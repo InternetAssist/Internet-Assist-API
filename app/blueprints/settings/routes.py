@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from flask import Blueprint, g, request
+from datetime import datetime, timezone
 
+from flask import Blueprint, g, request
+from sqlalchemy import func, text
+
+from app.extensions import db
+from app.models.chat_qa_cache import ChatQaCache
+from app.models.chat_session import ChatSession
 from app.services import ai_config_service, file_settings
 from app.services.audit_service import log_audit_action
 from app.utils.decorators import roles_required
@@ -131,7 +137,8 @@ def patch_enquiry_forwarding():
 
 
 # ── Admin: AI (Gemini) API key ─────────────────────────────────────────────────
-# The key is never returned to the browser once saved — only whether one is set.
+# Read-only -- the key itself only ever lives in the AI_API_KEY env var, set
+# directly on the server. There's no admin form to set/replace/clear it.
 
 @blp.route('/admin/settings/ai', methods=['GET'])
 @roles_required('admin')
@@ -139,34 +146,30 @@ def admin_get_ai_settings():
     return envelope(data={'configured': ai_config_service.is_configured()}, status=200)
 
 
-@blp.route('/admin/settings/ai', methods=['PATCH'])
+# ── Admin: chatbot health dashboard ─────────────────────────────────────────────
+# "Configured" only means a key is present, not that it currently works (wrong
+# key, expired billing, zero quota all still count as configured) -- this
+# combines that with the outcome of the most recent *real* Gemini call
+# (ai_config_service.last_status, updated by chat/service.py) plus DB
+# connectivity and cache/traffic stats into one dashboard read.
+
+@blp.route('/admin/health/chatbot', methods=['GET'])
 @roles_required('admin')
-def patch_ai_settings():
-    payload = request.get_json(silent=True) or {}
-    api_key = (payload.get('api_key') or '').strip()
-    if not api_key:
-        return envelope(error={'code': 'invalid', 'message': 'api_key is required', 'details': None}, status=422)
+def admin_chatbot_health():
+    try:
+        db.session.execute(text('SELECT 1'))
+        db_connected = True
+    except Exception:
+        db_connected = False
 
-    ai_config_service.set_api_key(api_key)
-    log_audit_action(
-        actor_user_id=g.current_user.id,
-        action='admin_update_ai_key',
-        entity='site_setting',
-        entity_id='ai_config',
-        ip=request.remote_addr,
-    )
-    return envelope(data={'configured': True}, status=200)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
-
-@blp.route('/admin/settings/ai', methods=['DELETE'])
-@roles_required('admin')
-def delete_ai_settings():
-    ai_config_service.clear_api_key()
-    log_audit_action(
-        actor_user_id=g.current_user.id,
-        action='admin_clear_ai_key',
-        entity='site_setting',
-        entity_id='ai_config',
-        ip=request.remote_addr,
-    )
-    return envelope(data={'configured': False}, status=200)
+    return envelope(data={
+        'db_connected': db_connected,
+        'chatbot_widget_enabled': file_settings.get('chatbot').get('enabled', False),
+        'ai_configured': ai_config_service.is_configured(),
+        'ai_last_status': ai_config_service.last_status(),
+        'cache_entries': ChatQaCache.query.count(),
+        'cache_total_hits': int(db.session.query(func.coalesce(func.sum(ChatQaCache.hit_count), 0)).scalar()),
+        'sessions_today': ChatSession.query.filter(ChatSession.started_at >= today_start).count(),
+    }, status=200)

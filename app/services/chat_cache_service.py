@@ -81,11 +81,21 @@ def _normalize(text: str) -> str:
     return re.sub(r'\s+', ' ', text.strip().lower())
 
 
+def _stem(word: str) -> str:
+    # Naive pluralization handling, not a real stemmer -- "apps" and "app"
+    # were scoring as two unrelated tokens, same for "services"/"service".
+    # Deliberately conservative (skip short words and words already ending
+    # in 'ss') to avoid mangling real words into false matches.
+    if len(word) > 3 and word.endswith('s') and not word.endswith('ss'):
+        return word[:-1]
+    return word
+
+
 def _significant_tokens(normalized_text: str, config: dict) -> set[str]:
     stopwords = set(config['stopwords'])
     synonyms = _synonym_map(config)
     words = re.findall(r"[a-z0-9']+", normalized_text)
-    return {synonyms.get(w, w) for w in words if w not in stopwords}
+    return {synonyms.get(_stem(w), _stem(w)) for w in words if w not in stopwords}
 
 
 def _similarity(a_normalized: str, b_normalized: str, config: dict) -> float:

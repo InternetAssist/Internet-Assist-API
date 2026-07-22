@@ -1,34 +1,38 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from flask import current_app
 
 from app.models.site_setting import SiteSetting
-from app.services.crypto_service import decrypt_text, encrypt_text
 
-_KEY = 'ai_config'
+_STATUS_KEY = 'ai_last_status'
 
 
 def is_configured() -> bool:
-    stored = SiteSetting.get(_KEY, {}) or {}
-    if stored.get('api_key_encrypted'):
-        return True
     return bool(current_app.config.get('AI_API_KEY'))
 
 
-def set_api_key(api_key: str) -> None:
-    SiteSetting.upsert(_KEY, {'api_key_encrypted': encrypt_text(api_key)})
-
-
-def clear_api_key() -> None:
-    SiteSetting.upsert(_KEY, {})
-
-
 def resolve_api_key() -> str | None:
-    """DB-stored key (set via Admin) takes priority; falls back to the env var."""
-    stored = SiteSetting.get(_KEY, {}) or {}
-    encrypted = stored.get('api_key_encrypted')
-    if encrypted:
-        decrypted = decrypt_text(encrypted)
-        if decrypted:
-            return decrypted
     return current_app.config.get('AI_API_KEY') or None
+
+
+def record_call_result(success: bool, detail: str | None = None) -> None:
+    """Tracks the outcome of the most recent real Gemini call.
+
+    "Configured" (is_configured) only means a key is present -- it doesn't
+    mean the key actually works right now (wrong key, expired billing, zero
+    quota, etc. all still count as "configured"). This is what the admin
+    dashboard's live status indicator reads, updated by service.py after
+    every real chat request that reaches the AI branch -- no extra API
+    calls are spent just to populate this.
+    """
+    SiteSetting.upsert(_STATUS_KEY, {
+        'success': success,
+        'detail': detail,
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def last_status() -> dict | None:
+    return SiteSetting.get(_STATUS_KEY)
