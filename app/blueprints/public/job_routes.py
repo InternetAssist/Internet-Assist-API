@@ -28,7 +28,8 @@ blp = Blueprint('public-jobs', __name__, description='Job applications')
 @blp.arguments(JobApplicationFormSchema, location='form')
 @limiter.limit('5/minute')
 def create_job(payload):
-    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr):
+    origin = request.headers.get('Origin') or request.headers.get('Referer')
+    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin):
         return envelope(data={'id': uuid4().hex, 'status': 'new'}, status=201)
 
     upload = request.files.get('cv')

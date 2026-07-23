@@ -23,7 +23,8 @@ blp = Blueprint('public-contact', __name__, description='Contact submissions')
 def create_contact(payload):
     # Honeypot tripped, or reCAPTCHA thinks this is a bot -- pretend success
     # so it doesn't adjust its behaviour, but skip the DB write and every email.
-    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr):
+    origin = request.headers.get('Origin') or request.headers.get('Referer')
+    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin):
         return envelope(data={'id': uuid4().hex, 'status': 'new', 'ticket_ref': None}, status=201)
 
     contact = Contact(

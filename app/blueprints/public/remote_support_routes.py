@@ -21,7 +21,8 @@ blp = Blueprint('public-remote-support', __name__, description='Remote support r
 @blp.arguments(RemoteSupportRequestSchema)
 @limiter.limit('5/minute')
 def create_remote_support(payload):
-    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr):
+    origin = request.headers.get('Origin') or request.headers.get('Referer')
+    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin):
         return envelope(data={'id': uuid4().hex, 'status': 'new', 'ticket_ref': None}, status=201)
 
     contact = Contact(

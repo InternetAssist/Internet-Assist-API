@@ -21,7 +21,8 @@ blp = Blueprint('public-quotes', __name__, description='Quote requests')
 @blp.arguments(QuoteCreateSchema)
 @limiter.limit('10/minute')
 def create_quote(payload):
-    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr):
+    origin = request.headers.get('Origin') or request.headers.get('Referer')
+    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin):
         return envelope(data={'id': uuid4().hex, 'status': 'pending', 'ticket_ref': None}, status=201)
 
     quote = Quote(

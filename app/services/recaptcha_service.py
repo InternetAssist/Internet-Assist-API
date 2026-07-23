@@ -11,7 +11,7 @@ _VERIFY_URL = 'https://www.google.com/recaptcha/api/siteverify'
 _SCORE_THRESHOLD = 0.5
 
 
-def verify_recaptcha(token: str, remote_ip: str | None = None) -> bool:
+def verify_recaptcha(token: str, remote_ip: str | None = None, origin: str | None = None) -> bool:
     """Verify a reCAPTCHA v3 token. Returns True if the submission should be
     allowed through -- including when RECAPTCHA_SECRET_KEY isn't configured,
     so local dev and testing work without real Google API keys."""
@@ -28,7 +28,19 @@ def verify_recaptcha(token: str, remote_ip: str | None = None) -> bool:
         # the caller either way) is worse than letting one slip through.
         # A *present* token with a low bot-likelihood score below still
         # gets rejected -- that's a real signal, not an infra hiccup.
-        return True
+        #
+        # BUT a missing token combined with a missing/foreign Origin is a
+        # different signal entirely: a real browser on our own pages always
+        # sends Origin (or Referer) on this fetch, ad-blockers included --
+        # they block Google's script, not the browser's own request headers.
+        # No Origin at all is what a script hitting the API directly (curl,
+        # a scraper) looks like. Confirmed exploitable in production: a
+        # direct POST with no token and no Origin created a real Contact row.
+        allowed = current_app.config.get('CORS_ORIGINS') or []
+        if origin and any(origin.startswith(o) for o in allowed):
+            return True
+        log.warning('reCAPTCHA missing token AND no matching Origin/Referer -- treating as bot')
+        return False
 
     try:
         resp = requests.post(
