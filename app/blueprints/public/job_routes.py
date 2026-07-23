@@ -19,6 +19,7 @@ from app.services.audit_service import log_audit_action
 from app.services.email_service import send_ticket_with_attachments, send_confirmation
 from app.services.media_service import save_document, load_document
 from app.services.recaptcha_service import verify_recaptcha
+from app.services.spam_signals_service import has_excessive_links, is_tor_exit_node
 from app.utils.response import envelope, error_envelope
 
 blp = Blueprint('public-jobs', __name__, description='Job applications')
@@ -29,7 +30,13 @@ blp = Blueprint('public-jobs', __name__, description='Job applications')
 @limiter.limit('5/minute')
 def create_job(payload):
     origin = request.headers.get('Origin') or request.headers.get('Referer')
-    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin):
+    is_spam = (
+        payload.get('website')
+        or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin)
+        or is_tor_exit_node(request.remote_addr)
+        or has_excessive_links(payload.get('cover_letter'))
+    )
+    if is_spam:
         return envelope(data={'id': uuid4().hex, 'status': 'new'}, status=201)
 
     upload = request.files.get('cv')

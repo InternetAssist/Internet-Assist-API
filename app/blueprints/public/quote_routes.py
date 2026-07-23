@@ -11,6 +11,7 @@ from app.schemas.public import QuoteCreateSchema
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_confirmation, send_ticket
 from app.services.recaptcha_service import verify_recaptcha
+from app.services.spam_signals_service import has_excessive_links, is_tor_exit_node
 from app.services.ticket_service import create_ticket
 from app.utils.response import envelope
 
@@ -22,7 +23,13 @@ blp = Blueprint('public-quotes', __name__, description='Quote requests')
 @limiter.limit('10/minute')
 def create_quote(payload):
     origin = request.headers.get('Origin') or request.headers.get('Referer')
-    if payload.get('website') or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin):
+    is_spam = (
+        payload.get('website')
+        or not verify_recaptcha(payload.get('recaptcha_token'), request.remote_addr, origin)
+        or is_tor_exit_node(request.remote_addr)
+        or has_excessive_links(payload.get('details'))
+    )
+    if is_spam:
         return envelope(data={'id': uuid4().hex, 'status': 'pending', 'ticket_ref': None}, status=201)
 
     quote = Quote(
