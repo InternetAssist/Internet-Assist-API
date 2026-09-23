@@ -15,7 +15,9 @@ blp = Blueprint('chat', __name__, description='Public chatbot')
 
 @blp.route('/chat', methods=['POST'])
 @blp.arguments(ChatRequestSchema)
-@limiter.limit('5/minute')
+# Per IP. The daily cap stops one visitor from draining the AI budget that
+# every other visitor shares (CHAT_MAX_AI_CALLS_PER_DAY).
+@limiter.limit('5/minute;60/day')
 def chat(payload):
     result = process_message(
         message=payload['message'],
@@ -36,6 +38,8 @@ def chat(payload):
             'action':         result['action'],
             'action_payload': result['action_payload'],
             'session_id':     result['session_id'],
+            'ai_generated':   result['ai_generated'],
+            'sources':        result['sources'],
         },
         status=200,
     )

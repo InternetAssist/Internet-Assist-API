@@ -15,6 +15,7 @@ _ALLOWED_CV_EXTENSIONS = {'.pdf', '.doc', '.docx'}
 from app.extensions import db, limiter
 from app.models.job_application import JobApplication
 from app.schemas.public import JobApplicationFormSchema
+from app.services import background
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_ticket_with_attachments, send_confirmation
 from app.services.media_service import save_document, load_document
@@ -74,7 +75,25 @@ def create_job(payload):
         'CV':           cv_original_name,
     }
 
-    # Notify HR via internal email with CV attached (best-effort)
+    background.submit(
+        _send_application_emails,
+        application_id=application.id,
+        fields=fields,
+        cv_file_name=cv_file_name,
+        cv_original_name=cv_original_name,
+    )
+
+    try:
+        log_audit_action(action='public_job_created', entity='job_application', entity_id=application.id, ip=request.remote_addr)
+    except Exception:
+        pass
+    return envelope(data={'id': application.id, 'status': application.status}, status=201)
+
+
+def _send_application_emails(*, application_id: str, fields: dict, cv_file_name: str | None, cv_original_name: str | None) -> None:
+    """HR notification with the CV attached, then the applicant's
+    confirmation. Runs on the background pool -- decrypting the CV and two
+    Graph calls used to hold the applicant's request open."""
     try:
         email_attachments = None
         if cv_file_name and cv_original_name:
@@ -83,28 +102,18 @@ def create_job(payload):
                 email_attachments = [(doc[0], cv_original_name)]
         send_ticket_with_attachments(
             ticket_type='job_application',
-            ticket_id=application.id,
+            ticket_id=application_id,
             fields=fields,
-            user_email=application.email,
+            user_email=fields['Email'],
             attachments=email_attachments,
         )
     except Exception:
-        pass
+        log.exception('Job application HR email failed for %s', application_id)
 
-    # Confirmation email to applicant
-    try:
-        send_confirmation(
-            ticket_type='job_application',
-            recipient_email=application.email,
-            recipient_name=application.full_name,
-            ticket_ref=None,
-            details=fields,
-        )
-    except Exception:
-        pass
-
-    try:
-        log_audit_action(action='public_job_created', entity='job_application', entity_id=application.id, ip=request.remote_addr)
-    except Exception:
-        pass
-    return envelope(data={'id': application.id, 'status': application.status}, status=201)
+    send_confirmation(
+        ticket_type='job_application',
+        recipient_email=fields['Email'],
+        recipient_name=fields['Name'],
+        ticket_ref=None,
+        details=fields,
+    )

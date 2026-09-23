@@ -25,12 +25,13 @@ from app.schemas.admin import (
     JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
 )
+from app.services import background
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_job_status_update
 from app.services.media_service import (
     delete_document, delete_image,
-    load_company_file, load_document,
-    save_company_file, save_image,
+    FileTooLargeError, load_document, open_company_file,
+    save_company_file_stream, save_image,
 )
 from app.services.ms_auth_service import (
     build_auth_flow, complete_auth_flow, get_profile_details, get_profile_photo, has_admin_app_role,
@@ -417,15 +418,13 @@ def patch_job(payload, job_id):
         ip=request.remote_addr,
     )
     if old_status != new_status:
-        try:
-            send_job_status_update(
-                recipient_email=job.email,
-                recipient_name=job.full_name,
-                position=job.position,
-                new_status=new_status,
-            )
-        except Exception:
-            pass
+        background.submit(
+            send_job_status_update,
+            recipient_email=job.email,
+            recipient_name=job.full_name,
+            position=job.position,
+            new_status=new_status,
+        )
     return envelope(data=_serialize_job(job), status=200)
 
 
@@ -968,7 +967,7 @@ def upload_blog_cover_image(post_id):
 # — there is no public route for company files.
 
 _ALLOWED_COMPANY_FILE_EXTENSIONS = {'.msi'}
-_MAX_COMPANY_FILE_SIZE = 250 * 1024 * 1024  # matches MAX_CONTENT_LENGTH
+_MAX_COMPANY_FILE_SIZE = 250 * 1024 * 1024  # raised per-request over the global MAX_CONTENT_LENGTH
 
 
 def _serialize_company(c: Company) -> dict:
@@ -1087,6 +1086,8 @@ def list_company_files(company_id):
 @blp.route('/admin/companies/<string:company_id>/files', methods=['POST'])
 @roles_required('admin')
 def upload_company_file(company_id):
+    # Must be set before request.files is first touched below.
+    request.max_content_length = _MAX_COMPANY_FILE_SIZE
     company = db.session.get(Company, company_id)
     if not company:
         return envelope(error={'code': 'not_found', 'message': 'Company not found', 'details': None}, status=404)
@@ -1102,22 +1103,21 @@ def upload_company_file(company_id):
     if ext not in _ALLOWED_COMPANY_FILE_EXTENSIONS:
         return envelope(error={'code': 'invalid_type', 'message': 'Only .msi files are accepted.', 'details': None}, status=422)
 
-    data = upload.read()
-    if len(data) > _MAX_COMPANY_FILE_SIZE:
-        return envelope(error={'code': 'file_too_large', 'message': 'File exceeds the 250 MB limit.', 'details': None}, status=413)
-
     description = (request.form.get('description') or '').strip() or None
 
     try:
-        stored_file_id = save_company_file(data, ext)
+        stored_file_id, file_size = save_company_file_stream(upload.stream, ext, _MAX_COMPANY_FILE_SIZE)
+    except FileTooLargeError:
+        return envelope(error={'code': 'file_too_large', 'message': 'File exceeds the 250 MB limit.', 'details': None}, status=413)
     except Exception:
+        current_app.logger.exception('company_file_store_failed')
         return envelope(error={'code': 'upload_failed', 'message': 'Failed to store file.', 'details': None}, status=500)
 
     company_file = CompanyFile(
         company_id=company_id,
         original_filename=original_name,
         stored_file_id=stored_file_id,
-        file_size=len(data),
+        file_size=file_size,
         description=description,
         uploaded_by=g.current_user.id,
     )
@@ -1129,7 +1129,7 @@ def upload_company_file(company_id):
         action='admin_upload_company_file',
         entity='company_file',
         entity_id=company_file.id,
-        diff={'company': company.name, 'filename': original_name, 'size': len(data)},
+        diff={'company': company.name, 'filename': original_name, 'size': file_size},
         ip=request.remote_addr,
     )
     return envelope(data=_serialize_company_file(company_file), status=201)
@@ -1169,11 +1169,11 @@ def download_company_file(company_id, file_id):
     if not company_file or company_file.company_id != company_id:
         return envelope(error={'code': 'not_found', 'message': 'File not found', 'details': None}, status=404)
 
-    doc = load_company_file(company_file.stored_file_id)
+    doc = open_company_file(company_file.stored_file_id)
     if not doc:
         return envelope(error={'code': 'file_unavailable', 'message': 'File could not be retrieved', 'details': None}, status=404)
 
-    data, mime = doc
+    chunks, mime = doc
     log_audit_action(
         actor_user_id=g.current_user.id,
         action='admin_download_company_file',
@@ -1182,12 +1182,11 @@ def download_company_file(company_id, file_id):
         diff={'filename': company_file.original_filename},
         ip=request.remote_addr,
     )
-    return Response(
-        data,
-        status=200,
-        mimetype=mime,
-        headers={'Content-Disposition': f'attachment; filename="{company_file.original_filename}"'},
-    )
+    # Streamed straight from disk, decrypting 1 MB at a time.
+    headers = {'Content-Disposition': f'attachment; filename="{company_file.original_filename}"'}
+    if company_file.file_size:
+        headers['Content-Length'] = str(company_file.file_size)
+    return Response(chunks, status=200, mimetype=mime, headers=headers, direct_passthrough=True)
 
 
 @blp.route('/admin/companies/<string:company_id>/files/<string:file_id>', methods=['DELETE'])

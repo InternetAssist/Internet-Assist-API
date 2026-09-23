@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 
 import requests
@@ -12,12 +13,14 @@ _TOR_LIST_URL = 'https://check.torproject.org/torbulkexitlist'
 _TOR_CACHE_TTL_SECONDS = 6 * 3600  # Tor's exit list changes constantly; a few hours' staleness is fine for this use.
 
 _tor_cache: dict = {'ips': set(), 'fetched_at': 0.0}
+_refresh_lock = threading.Lock()
 
 _URL_RE = re.compile(r'https?://|www\.', re.IGNORECASE)
 _MAX_LINKS = 2  # legitimate enquiries essentially never contain more than one or two links
 
 
 def _refresh_tor_list() -> None:
+    # Called with _refresh_lock held; releases it when done.
     try:
         resp = requests.get(_TOR_LIST_URL, timeout=8)
         resp.raise_for_status()
@@ -31,6 +34,11 @@ def _refresh_tor_list() -> None:
         # is the very first fetch) rather than blocking every submission
         # because Tor's list server had a bad moment.
         log.warning('Tor exit list refresh failed: %s', exc)
+        # Back off instead of retrying on every request while the list
+        # server is down.
+        _tor_cache['fetched_at'] = time.time() - _TOR_CACHE_TTL_SECONDS + 600
+    finally:
+        _refresh_lock.release()
 
 
 def is_tor_exit_node(ip: str | None) -> bool:
@@ -39,8 +47,11 @@ def is_tor_exit_node(ip: str | None) -> bool:
     of Tor, so this is a high-confidence, low-collateral-damage signal."""
     if not ip:
         return False
-    if time.time() - _tor_cache['fetched_at'] > _TOR_CACHE_TTL_SECONDS:
-        _refresh_tor_list()
+    # Refresh in the background -- never make a visitor's form submission
+    # wait up to 8s on Tor's list server. Until the first fetch lands this
+    # fails open (empty set), same as when the fetch fails.
+    if time.time() - _tor_cache['fetched_at'] > _TOR_CACHE_TTL_SECONDS and _refresh_lock.acquire(blocking=False):
+        threading.Thread(target=_refresh_tor_list, name='tor-refresh', daemon=True).start()
     return ip in _tor_cache['ips']
 
 

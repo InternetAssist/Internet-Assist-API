@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from flask import Blueprint, g, request
+from flask import Blueprint, current_app, g, request
 from sqlalchemy import func, text
 
 from app.extensions import db
 from app.models.chat_qa_cache import ChatQaCache
 from app.models.chat_session import ChatSession
-from app.services import ai_config_service, file_settings
+from app.models.site_knowledge import SiteKnowledgeChunk
+from app.services import ai_config_service, ai_usage_service, background, file_settings, knowledge_service, site_crawler
 from app.services.audit_service import log_audit_action
 from app.utils.decorators import roles_required
 from app.utils.response import envelope
@@ -172,4 +173,36 @@ def admin_chatbot_health():
         'cache_entries': ChatQaCache.query.count(),
         'cache_total_hits': int(db.session.query(func.coalesce(func.sum(ChatQaCache.hit_count), 0)).scalar()),
         'sessions_today': ChatSession.query.filter(ChatSession.started_at >= today_start).count(),
+        'knowledge': {
+            **site_crawler.knowledge_status(),
+            'stored_chunks': SiteKnowledgeChunk.query.count(),
+        },
+        'meaning_search': {
+            'model': current_app.config['EMBEDDING_MODEL'],
+            # Vectors indexed and the embedding API currently reachable.
+            'active': knowledge_service.meaning_active(),
+            'calibrated': knowledge_service.semantic_thresholds() is not None,
+        },
+        'usage_today': ai_usage_service.today(),
+        'usage_last_14_days': ai_usage_service.last_days(14),
+        'limits': {
+            'ai_calls_per_day': current_app.config['CHAT_MAX_AI_CALLS_PER_DAY'],
+            'ai_calls_per_session': current_app.config['CHAT_MAX_AI_CALLS_PER_SESSION'],
+        },
     }, status=200)
+
+
+@blp.route('/admin/chatbot/reindex', methods=['POST'])
+@roles_required('admin')
+def admin_chatbot_reindex():
+    """Re-crawl the website into the chatbot's knowledge now. Runs in the
+    background -- poll /admin/health/chatbot for the result."""
+    background.submit(site_crawler.rebuild_knowledge)
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_chatbot_reindex',
+        entity='site_setting',
+        entity_id='chat_knowledge',
+        ip=request.remote_addr,
+    )
+    return envelope(data={'started': True}, status=202)

@@ -9,7 +9,20 @@ from pathlib import Path
 class BaseConfig:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-only-insecure-key-change-in-production')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True}
+    # pool_recycle stays under MariaDB's default wait_timeout so the server
+    # never hands back a connection it has already closed. The pool must be at
+    # least as big as the WSGI thread count (WAITRESS_THREADS, default 8) or
+    # requests queue for a connection under load.
+    _db_url = os.getenv('DATABASE_URL', '')
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 280,
+        **({} if _db_url.startswith('sqlite') else {
+            'pool_size':    int(os.getenv('DB_POOL_SIZE', '10')),
+            'max_overflow': int(os.getenv('DB_MAX_OVERFLOW', '10')),
+            'pool_timeout': 10,
+        }),
+    }
     SQLALCHEMY_RECORD_QUERIES = False
 
     API_TITLE = 'Internet Assist API'
@@ -32,13 +45,15 @@ class BaseConfig:
     # api.ia.uk (not a subdomain of ia.uk) -- SameSite=Lax silently drops the
     # cookie on cross-site fetch() calls from there, so production needs
     # SameSite=None (requires Secure, already forced below). CSRF is instead
-    # covered by the CORS origin allowlist + every state-changing route
-    # requiring a JSON body, which a plain cross-site HTML form can't send.
+    # covered by the CORS origin allowlist + a required X-Requested-With
+    # header on every non-GET /admin request (app/__init__.py) -- a plain
+    # cross-site HTML form can't set it. flask-jwt-extended's double-submit
+    # CSRF can't work here: the frontend can't read a cookie set on api.ia.uk.
     _is_production = os.getenv('APP_ENV', 'development') == 'production'
     JWT_TOKEN_LOCATION = ['headers', 'cookies']
     JWT_COOKIE_SECURE = _is_production
     JWT_COOKIE_SAMESITE = 'None' if _is_production else 'Lax'
-    JWT_COOKIE_CSRF_PROTECT = False  # CORS allowlist + JSON-only bodies provide CSRF protection
+    JWT_COOKIE_CSRF_PROTECT = False  # see the X-Requested-With check in app/__init__.py
     JWT_ACCESS_COOKIE_NAME = 'access_token'
 
     # Rate limiting — uses in-memory store by default; set REDIS_URL for multi-worker
@@ -53,7 +68,11 @@ class BaseConfig:
         if origin.strip()
     ]
 
-    MAX_CONTENT_LENGTH = 250 * 1024 * 1024  # 250 MB — raised for company installer files (NinjaOne MSIs etc, often 50MB+)
+    # 10 MB for every route by default -- this also caps the public CV upload
+    # and JSON endpoints, which are read fully into memory. The admin company
+    # installer upload (NinjaOne MSIs etc, often 50MB+) raises its own limit
+    # per-request instead -- see upload_company_file in admin/routes.py.
+    MAX_CONTENT_LENGTH = 10 * 1024 * 1024
     JSON_SORT_KEYS = False
     APPINSIGHTS_CONNECTION_STRING = os.getenv('APPINSIGHTS_CONNECTION_STRING', '')
 
@@ -105,6 +124,34 @@ class BaseConfig:
     PUBLIC_CONTACT_PHONE = os.getenv('PUBLIC_CONTACT_PHONE', '01621 840014')
     TICKET_API_URL       = os.getenv('TICKET_API_URL', '')
 
+    # Emails and other slow side-effects run on a small, bounded thread pool
+    # so a visitor's request doesn't wait on Microsoft Graph.
+    BACKGROUND_WORKERS = int(os.getenv('BACKGROUND_WORKERS', '2'))
+
+    # ── Chatbot ──────────────────────────────────────────────────────────────
+    # Public website the chatbot learns from (sitemap.xml + prerendered pages).
+    SITE_URL = os.getenv('SITE_URL', 'https://www.ia.uk').rstrip('/')
+    CHAT_KNOWLEDGE_MAX_AGE_HOURS  = int(os.getenv('CHAT_KNOWLEDGE_MAX_AGE_HOURS', '24'))
+    # Hard caps on Gemini spend. Off-topic questions and greetings never reach
+    # the AI at all; these bound what's left.
+    CHAT_MAX_AI_CALLS_PER_SESSION = int(os.getenv('CHAT_MAX_AI_CALLS_PER_SESSION', '15'))
+    CHAT_MAX_AI_CALLS_PER_DAY     = int(os.getenv('CHAT_MAX_AI_CALLS_PER_DAY', '500'))
+    # Meaning-based matching (app/services/embedding_service.py). Uses
+    # AI_API_KEY; without it, or while the API is failing, the chatbot falls
+    # back to keyword search automatically.
+    EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'gemini-embedding-2')
+    EMBEDDING_DIM   = int(os.getenv('EMBEDDING_DIM', '768'))
+
+    # ── Monitoring ───────────────────────────────────────────────────────────
+    MONITORING_ENABLED     = os.getenv('MONITORING_ENABLED', 'true').lower() == 'true'
+    SLOW_REQUEST_MS        = int(os.getenv('SLOW_REQUEST_MS', '2000'))
+    MEMORY_WARN_MB         = int(os.getenv('MEMORY_WARN_MB', '700'))
+    # Retention for the automatic daily clean-up (app/services/maintenance.py).
+    RETENTION_PAGE_VIEWS_DAYS     = int(os.getenv('RETENTION_PAGE_VIEWS_DAYS', '395'))
+    RETENTION_CHAT_DAYS           = int(os.getenv('RETENTION_CHAT_DAYS', '90'))
+    RETENTION_AUDIT_DAYS          = int(os.getenv('RETENTION_AUDIT_DAYS', '730'))
+    RETENTION_METRICS_DAYS        = int(os.getenv('RETENTION_METRICS_DAYS', '30'))
+
     @staticmethod
     def database_url() -> str:
         url = os.getenv('DATABASE_URL')
@@ -124,6 +171,7 @@ class TestingConfig(BaseConfig):
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=5)
     RATELIMIT_STORAGE_URI = 'memory://'
     WTF_CSRF_ENABLED = False
+    MONITORING_ENABLED = False
 
 
 class ProductionConfig(BaseConfig):

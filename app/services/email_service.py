@@ -10,6 +10,7 @@ import requests
 from flask import current_app, request
 
 from app.logging import logger
+from app.services.graph_token import get_app_token
 from app.services import file_settings
 
 # Brand gradient (matches the site's emerald->teal CTA buttons) and logo,
@@ -51,7 +52,6 @@ _TICKET_LABELS = {
     'remote_support':  'Remote Support Request',
 }
 
-_GRAPH_TOKEN_URL = 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
 _GRAPH_SEND_URL  = 'https://graph.microsoft.com/v1.0/users/{sender}/sendMail'
 
 
@@ -61,18 +61,7 @@ def _get_access_token() -> str | None:
     client_secret = current_app.config.get('GRAPH_CLIENT_SECRET', '')
     if not (tenant_id and client_id and client_secret):
         return None
-    resp = requests.post(
-        _GRAPH_TOKEN_URL.format(tenant_id=tenant_id),
-        data={
-            'grant_type':    'client_credentials',
-            'client_id':     client_id,
-            'client_secret': client_secret,
-            'scope':         'https://graph.microsoft.com/.default',
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()['access_token']
+    return get_app_token(tenant_id, client_id, client_secret)
 
 
 def _graph_send(

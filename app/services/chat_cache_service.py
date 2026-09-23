@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 
 from app.extensions import db
 from app.logging import logger
@@ -62,6 +64,18 @@ _UNCACHEABLE_REPLIES = {
 }
 
 
+# Hard cap on stored replies. Every first question that isn't already cached
+# becomes a row, so without a cap the table -- and the scan in
+# find_cached_reply -- grows forever.
+_MAX_ENTRIES = 1000
+_CONFIG_TTL_SECONDS = 60
+
+_lock = threading.Lock()
+_config_cache: tuple[float, dict, frozenset, dict] | None = None
+# Per-process memo of each cached question's token set, keyed by row id.
+_token_cache: dict[str, frozenset] = {}
+
+
 def _config() -> dict:
     existing = SiteSetting.get(_CONFIG_KEY)
     if existing is not None:
@@ -71,6 +85,23 @@ def _config() -> dict:
     SiteSetting.upsert(_CONFIG_KEY, _DEFAULT_CONFIG)
     logger.info('chat_cache_config_seeded')
     return _DEFAULT_CONFIG
+
+
+def _prepared() -> tuple[dict, frozenset, dict]:
+    """Config plus its stopword set and synonym map, re-read from the DB at
+    most once a minute instead of rebuilt for every cached row compared."""
+    global _config_cache
+    now = time.monotonic()
+    with _lock:
+        if _config_cache and now - _config_cache[0] < _CONFIG_TTL_SECONDS:
+            return _config_cache[1:]
+    config = _config()
+    prepared = (now, config, frozenset(config['stopwords']), _synonym_map(config))
+    with _lock:
+        if _config_cache is None or _config_cache[1] != config:
+            _token_cache.clear()
+        _config_cache = prepared
+    return prepared[1:]
 
 
 def _synonym_map(config: dict) -> dict[str, str]:
@@ -91,16 +122,12 @@ def _stem(word: str) -> str:
     return word
 
 
-def _significant_tokens(normalized_text: str, config: dict) -> set[str]:
-    stopwords = set(config['stopwords'])
-    synonyms = _synonym_map(config)
+def _significant_tokens(normalized_text: str, stopwords: frozenset, synonyms: dict) -> frozenset:
     words = re.findall(r"[a-z0-9']+", normalized_text)
-    return {synonyms.get(_stem(w), _stem(w)) for w in words if w not in stopwords}
+    return frozenset(synonyms.get(_stem(w), _stem(w)) for w in words if w not in stopwords)
 
 
-def _similarity(a_normalized: str, b_normalized: str, config: dict) -> float:
-    tokens_a = _significant_tokens(a_normalized, config)
-    tokens_b = _significant_tokens(b_normalized, config)
+def _similarity(tokens_a: frozenset, tokens_b: frozenset) -> float:
     if not tokens_a or not tokens_b:
         return 0.0
     return len(tokens_a & tokens_b) / len(tokens_a | tokens_b)
@@ -128,20 +155,30 @@ def find_cached_reply(message: str) -> ChatQaCache | None:
     if not normalized:
         return None
 
-    config = _config()
-    best: ChatQaCache | None = None
+    config, stopwords, synonyms = _prepared()
+    query_tokens = _significant_tokens(normalized, stopwords, synonyms)
+    best_id: str | None = None
     best_score = 0.0
-    # Table stays small for a business this size (hundreds, not millions, of
-    # distinct questions) -- a linear scan is simpler and easier to reason
-    # about than standing up embeddings/vector search for that volume.
-    for entry in ChatQaCache.query.all():
-        score = _similarity(normalized, entry.question_normalized, config)
+    # Linear scan over at most _MAX_ENTRIES short questions -- only the id and
+    # question text are loaded, never the replies.
+    seen: set[str] = set()
+    for entry_id, question in db.session.query(ChatQaCache.id, ChatQaCache.question_normalized):
+        seen.add(entry_id)
+        tokens = _token_cache.get(entry_id)
+        if tokens is None:
+            tokens = _token_cache[entry_id] = _significant_tokens(question, stopwords, synonyms)
+        score = _similarity(query_tokens, tokens)
         if score > best_score:
-            best, best_score = entry, score
+            best_id, best_score = entry_id, score
+    # Rows deleted elsewhere (a re-index clears the whole table, or another
+    # worker process pruned it) would otherwise stay in this memo forever.
+    if len(_token_cache) > len(seen):
+        for stale in set(_token_cache) - seen:
+            _token_cache.pop(stale, None)
 
-    if best and best_score >= config['match_threshold']:
-        logger.info('chat_cache_hit', score=round(best_score, 3), cache_id=best.id)
-        return best
+    if best_id and best_score >= config['match_threshold']:
+        logger.info('chat_cache_hit', score=round(best_score, 3), cache_id=best_id)
+        return db.session.get(ChatQaCache, best_id)
     return None
 
 
@@ -152,6 +189,7 @@ def store_reply(
     action: str | None,
     action_payload: dict | None,
     model_name: str | None,
+    sources: list[dict] | None = None,
 ) -> None:
     if not is_cacheable(message, reply):
         return
@@ -168,9 +206,27 @@ def store_reply(
         action=action,
         action_payload=action_payload,
         model_name=model_name,
+        sources=sources or None,
     )
     db.session.add(entry)
     logger.info('chat_cache_stored', question=normalized[:80])
+    _prune()
+
+
+def _prune() -> None:
+    """Keep the table at _MAX_ENTRIES by dropping the least-used, oldest rows."""
+    excess = ChatQaCache.query.count() - _MAX_ENTRIES
+    if excess <= 0:
+        return
+    ids = [
+        row.id for row in
+        db.session.query(ChatQaCache.id)
+        .order_by(ChatQaCache.hit_count.asc(), ChatQaCache.created_at.asc())
+        .limit(excess)
+    ]
+    ChatQaCache.query.filter(ChatQaCache.id.in_(ids)).delete(synchronize_session=False)
+    for entry_id in ids:
+        _token_cache.pop(entry_id, None)
 
 
 def record_hit(entry: ChatQaCache) -> None:

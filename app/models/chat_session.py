@@ -28,3 +28,8 @@ class ChatSession(db.Model):
     # Ticket creation flow state captured for interactive chat ticketing
     ticket_flow_state = db.Column(db.String(50), nullable=True)
     ticket_flow_data = db.Column(db.JSON, nullable=True)
+    # Real Gemini calls made for this session (CHAT_MAX_AI_CALLS_PER_SESSION).
+    ai_calls = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    # Last time this conversation was on-topic -- lets short follow-ups
+    # ("and for 10 users?") through the relevance check.
+    last_relevant_at = db.Column(db.DateTime(timezone=True), nullable=True)

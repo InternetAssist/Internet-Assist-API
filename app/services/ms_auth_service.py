@@ -5,9 +5,7 @@ import requests
 from flask import current_app
 
 from app.logging import logger
-
-_GRAPH_TOKEN_URL = 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token'
-
+from app.services.graph_token import get_app_token
 
 def _msal_app() -> msal.ConfidentialClientApplication:
     return msal.ConfidentialClientApplication(
@@ -30,19 +28,12 @@ def complete_auth_flow(flow: dict, auth_response: dict) -> dict:
 
 
 def _graph_app_token() -> str:
-    """App-only client-credentials token — same pattern as email_service._get_access_token()."""
-    resp = requests.post(
-        _GRAPH_TOKEN_URL.format(tenant_id=current_app.config['MS_AUTH_TENANT_ID']),
-        data={
-            'grant_type':    'client_credentials',
-            'client_id':     current_app.config['MS_AUTH_CLIENT_ID'],
-            'client_secret': current_app.config['MS_AUTH_CLIENT_SECRET'],
-            'scope':         'https://graph.microsoft.com/.default',
-        },
-        timeout=15,
+    """App-only client-credentials token, cached until shortly before expiry."""
+    return get_app_token(
+        current_app.config['MS_AUTH_TENANT_ID'],
+        current_app.config['MS_AUTH_CLIENT_ID'],
+        current_app.config['MS_AUTH_CLIENT_SECRET'],
     )
-    resp.raise_for_status()
-    return resp.json()['access_token']
 
 
 def get_profile_details(user_oid: str) -> dict:

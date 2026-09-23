@@ -8,6 +8,7 @@ from flask_smorest import Blueprint
 from app.extensions import db, limiter
 from app.models.contact import Contact
 from app.schemas.public import ContactCreateSchema
+from app.services import background
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_confirmation, send_ticket
 from app.services.recaptcha_service import verify_recaptcha
@@ -68,21 +69,16 @@ def create_contact(payload):
         contact.ticket_ref = ticket['ticket_ref']
         db.session.commit()
 
-    try:
-        send_ticket(ticket_type='contact', ticket_id=contact.id, fields=fields, user_email=contact.email)
-    except Exception:
-        pass
+    background.submit(send_ticket, ticket_type='contact', ticket_id=contact.id, fields=fields, user_email=contact.email)
 
-    try:
-        send_confirmation(
-            ticket_type='contact',
-            recipient_email=contact.email,
-            recipient_name=contact.name,
-            ticket_ref=contact.ticket_ref,
-            details=fields,
-        )
-    except Exception:
-        pass
+    background.submit(
+        send_confirmation,
+        ticket_type='contact',
+        recipient_email=contact.email,
+        recipient_name=contact.name,
+        ticket_ref=contact.ticket_ref,
+        details=fields,
+    )
 
     log_audit_action(action='public_contact_created', entity='contact', entity_id=contact.id, ip=request.remote_addr)
     return envelope(data={'id': contact.id, 'status': contact.status, 'ticket_ref': contact.ticket_ref}, status=201)

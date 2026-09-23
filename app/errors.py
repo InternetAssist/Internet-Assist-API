@@ -15,6 +15,8 @@ def register_error_handlers(app):
         description = err.description or err.name
         if err.code == 422 and details:
             description = 'Validation failed'
+        if err.code == 413:
+            description = 'The upload is too large. Files must be under 10 MB.'
         return error_envelope('http_error', description, details, err.code or 500)
     @app.errorhandler(Exception)
     def handle_generic_error(err):

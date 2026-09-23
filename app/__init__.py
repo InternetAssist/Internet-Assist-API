@@ -11,9 +11,13 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from .config import config_by_name
 from .errors import register_error_handlers
 from .extensions import api, cors, db, jwt, limiter, migrate
+from .cli import register_cli
 from .logging import configure_logging
+from .services import monitoring
+from .utils.response import error_envelope
 
 _REQUEST_ID_RE = re.compile(r'^[a-zA-Z0-9\-]{8,36}$')
+_SAFE_METHODS = {'GET', 'HEAD', 'OPTIONS'}
 
 
 def create_app() -> Flask:
@@ -31,6 +35,10 @@ def create_app() -> Flask:
         # Trust 1 proxy hop so rate limiting uses real client IP
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
+    # First, so its timers wrap every other hook -- including requests the
+    # rate limiter rejects.
+    monitoring.init_app(app)
+
     db.init_app(app)
     migrate.init_app(app, db)
     jwt.init_app(app)
@@ -42,12 +50,30 @@ def create_app() -> Flask:
     limiter.init_app(app)
     api.init_app(app)
     register_error_handlers(app)
+    register_cli(app)
 
     @app.before_request
     def _bind_request_context():
         raw_id = request.headers.get('X-Request-Id', '')
         g.request_id = raw_id if _REQUEST_ID_RE.match(raw_id) else str(uuid.uuid4())
         g.started_at = datetime.now(timezone.utc)
+
+    @app.before_request
+    def _require_csrf_header_for_admin_writes():
+        # The admin JWT cookie is SameSite=None (see project_settings.py), so a
+        # third-party page could submit a plain HTML form -- including the
+        # multipart file uploads, which need no JSON body -- and the browser
+        # would attach the cookie. A custom header can't be added by a plain
+        # form, and adding one from script forces a CORS preflight that the
+        # origin allowlist rejects. Bearer-token callers aren't exposed to
+        # CSRF, so they're exempt.
+        if request.method in _SAFE_METHODS or not request.path.startswith('/admin'):
+            return None
+        if request.headers.get('Authorization'):
+            return None
+        if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+            return error_envelope('csrf_failed', 'Missing X-Requested-With header', None, 403)
+        return None
 
     @app.after_request
     def _attach_request_headers(response):
@@ -59,7 +85,12 @@ def create_app() -> Flask:
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
         response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=(), payment=()'
         response.headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'none'"
-        response.headers['Cache-Control'] = 'no-store'
+        # Default to no-store, but keep an explicit policy set by the view
+        # (public images under /media, the email logo, the admin photo) --
+        # overwriting those made browsers re-download and the server
+        # re-decrypt every image on every page view.
+        if 'Cache-Control' not in response.headers:
+            response.headers['Cache-Control'] = 'no-store'
         # Remove server fingerprinting headers
         response.headers.pop('Server', None)
         response.headers.pop('X-Powered-By', None)
@@ -92,6 +123,7 @@ def create_app() -> Flask:
     from app.blueprints.admin.routes import blp as admin_blp
     from app.blueprints.health.routes import blp as health_blp
     from app.blueprints.settings.routes import blp as settings_blp
+    from app.blueprints.ops.routes import blp as ops_blp
 
     api.register_blueprint(analytics_blp)
     api.register_blueprint(chat_blp)
@@ -106,5 +138,6 @@ def create_app() -> Flask:
     app.register_blueprint(health_blp)
     app.register_blueprint(media_blp)
     app.register_blueprint(settings_blp)
+    app.register_blueprint(ops_blp)
 
     return app

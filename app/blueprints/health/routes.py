@@ -158,7 +158,9 @@ def index():
         db_ok=db_ok,
         commit=git_info['commit'],
         commit_date=git_info['commit_date'],
-        changes=git_info['changes'],
+        # Commit messages describe what was fixed (including security fixes)
+        # -- don't publish them from the production API.
+        changes=git_info['changes'] if env != 'production' else [],
         show_docs=bool(current_app.config.get('OPENAPI_SWAGGER_UI_PATH')),
     )
 
