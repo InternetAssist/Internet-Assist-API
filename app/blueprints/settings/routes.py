@@ -19,7 +19,11 @@ _VALID_OVERRIDES = {'auto', 'winter', 'spring', 'summer', 'autumn', 'off'}
 
 @blp.route('/settings/season')
 def get_season():
-    return envelope(data=file_settings.get('season'), status=200)
+    resp, status = envelope(data=file_settings.get('season'), status=200)
+    # Same for every visitor, so browsers may reuse it briefly instead of
+    # asking again on each page; an admin change shows within a minute.
+    resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=600'
+    return resp, status
 
 
 @blp.route('/admin/settings/season', methods=['GET'])

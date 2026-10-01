@@ -40,6 +40,9 @@ def create_app() -> Flask:
         app,
         resources={r'/*': {'origins': app.config['CORS_ORIGINS']}},
         supports_credentials=True,
+        # Browsers may reuse a preflight answer for a day instead of sending
+        # an extra OPTIONS round trip before each admin/authenticated call.
+        max_age=86400,
     )
     limiter.init_app(app)
     api.init_app(app)

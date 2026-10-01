@@ -31,13 +31,14 @@ TimeoutStopSec=40
 # over this (normal use is ~100-150 MB).
 MemoryMax=700M
 
-# Hardening: the process can only write to the app folder and the data
-# folder, can't gain privileges, and sees a private /tmp.
+# Hardening: the process can only write to the app folder (which also holds
+# company_files, media_storage and site-settings), can't gain privileges,
+# and sees a private /tmp.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/SITE_USER/htdocs/api.ia.uk /home/SITE_USER/ia-data
+ReadWritePaths=/home/SITE_USER/htdocs/api.ia.uk
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
