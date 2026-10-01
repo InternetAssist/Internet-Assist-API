@@ -10,7 +10,7 @@ Flask 3 REST API for Internet Assist (ia.uk) — an IT support company based in 
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-cp .env.example .env   # fill in DATABASE_URL and AI_API_KEY at minimum
+cp .env.example .env   # fill in DATABASE_URL at minimum
 flask --app run:app run --debug
 ```
 
@@ -75,7 +75,6 @@ DATABASE_URL=mssql+pymssql://iaadmin:YourStrongPass123!@localhost:1433/InternetA
 SECRET_KEY=<random 64-char string>
 JWT_SECRET_KEY=<random 64-char string>
 CORS_ORIGINS=https://your-frontend-domain.com
-AI_API_KEY=<your Gemini API key>
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=<your Gmail>
@@ -144,7 +143,6 @@ Install the **URL Rewrite** and **Application Request Routing** IIS modules, the
 
 **Development** (`APP_ENV=development`):
 - Set `DATABASE_URL` to your local SQL Server or use SQLite (`sqlite:///dev.db`)
-- `AI_API_KEY` needed for chat to work
 - All other settings optional — app starts without email/ticket config
 
 **Testing** (`APP_ENV=testing`):
@@ -153,7 +151,7 @@ Install the **URL Rewrite** and **Application Request Routing** IIS modules, the
 - Set `JWT_ACCESS_TOKEN_EXPIRES` to 5 minutes (already set in `TestingConfig`)
 
 **Production** (`APP_ENV=production`):
-- **Mandatory:** `SECRET_KEY`, `JWT_SECRET_KEY`, `DATABASE_URL`, `AI_API_KEY`
+- **Mandatory:** `SECRET_KEY`, `JWT_SECRET_KEY`, `DATABASE_URL`
 - **Recommended:** `SMTP_*`, `NOTIFY_EMAIL_1`, `TICKET_API_URL`, `CORS_ORIGINS`
 - On Azure: all set via App Service application settings (deploy.sh pushes them)
 - On Windows Server: set in `.env` file in the app directory
@@ -165,7 +163,6 @@ Install the **URL Rewrite** and **Application Request Routing** IIS modules, the
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/chat` | Chat with the AI assistant |
 | POST | `/contact` | Contact form submission |
 | POST | `/quotes` | Quote request |
 | POST | `/job-applications` | Job application (multipart/form-data) |
@@ -180,34 +177,6 @@ Install the **URL Rewrite** and **Application Request Routing** IIS modules, the
 | GET | `/admin/jobs` | Admin — job applications (JWT required) |
 | GET | `/admin/stats` | Admin — dashboard stats (JWT required) |
 | GET | `/admin/audit-logs` | Admin — audit trail (JWT required) |
-
----
-
-## Example chat request
-
-```http
-POST /chat
-Content-Type: application/json
-
-{"message": "I want to get a quote", "session_id": null}
-```
-
-```json
-{
-  "data": {
-    "reply": "I'll open the quote request form.",
-    "type": "quote",
-    "action": "show_form",
-    "action_payload": {
-      "form_type": "quote",
-      "submit_url": "/quotes",
-      "submit_method": "POST",
-      "fields": [...]
-    },
-    "session_id": "abc123"
-  }
-}
-```
 
 ---
 
@@ -232,10 +201,6 @@ IA/
     │
     ├── blueprints/            # Route handlers, one folder per domain
     │   ├── health/            # GET /healthz — liveness probe
-    │   ├── chat/
-    │   │   ├── routes.py      # POST /chat — receives user message
-    │   │   ├── service.py     # Business logic: ticket flow, form triggers, AI dispatch
-    │   │   └── ai_gateway.py  # Gemini API call — returns {reply, action, form?}
     │   ├── public/
     │   │   ├── contact_routes.py        # POST /contact
     │   │   ├── quote_routes.py          # POST /quotes
@@ -252,8 +217,6 @@ IA/
     │   ├── quote.py           # Quote requests
     │   ├── job_application.py # CV / job applications
     │   ├── job_posting.py     # Open positions listed on the site
-    │   ├── chat_session.py    # Chat conversation (id, timestamps, ticket flow state)
-    │   ├── chat_message.py    # Individual messages (role: user|assistant, content)
     │   └── audit_log.py       # Immutable audit trail for all write actions
     │
     ├── schemas/               # Marshmallow request/response schemas (validation + docs)
@@ -274,17 +237,3 @@ IA/
 
 ---
 
-## Chat message flow
-
-```
-Browser  →  POST /chat
-            routes.py          validates input schema
-            service.py         1. Active ticket flow? → collect fields step-by-step
-                               2. "create ticket" keyword? → start ticket flow
-                               3. Everything else → call ai_gateway.py
-            ai_gateway.py      Calls Gemini with system prompt + last 20 messages
-                               Returns {reply, action: "show_form"|"redirect"|null}
-            service.py         Maps action → full form definition (fields, submit_url)
-                               Appends assistant message to chat session
-            routes.py  →  Browser: {reply, action, action_payload, session_id}
-```

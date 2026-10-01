@@ -83,10 +83,6 @@ class BaseConfig:
     NOTIFY_EMAIL_1      = os.getenv('NOTIFY_EMAIL_1', '')
     NOTIFY_EMAIL_2      = os.getenv('NOTIFY_EMAIL_2', '')
 
-    AI_PROVIDER   = os.getenv('AI_PROVIDER', 'gemini')
-    AI_MODEL_NAME = os.getenv('AI_MODEL_NAME', 'gemini-flash-latest')
-    AI_API_KEY    = os.getenv('AI_API_KEY', '')
-
     # reCAPTCHA v3 -- second layer of bot protection on public forms, on top
     # of the honeypot field. Blank = verification is skipped gracefully
     # (lets local dev/testing work without needing real Google API keys).
@@ -124,33 +120,9 @@ class BaseConfig:
     PUBLIC_CONTACT_PHONE = os.getenv('PUBLIC_CONTACT_PHONE', '01621 840014')
     TICKET_API_URL       = os.getenv('TICKET_API_URL', '')
 
-    # Emails and other slow side-effects run on a small, bounded thread pool
-    # so a visitor's request doesn't wait on Microsoft Graph.
-    BACKGROUND_WORKERS = int(os.getenv('BACKGROUND_WORKERS', '2'))
 
-    # ── Chatbot ──────────────────────────────────────────────────────────────
-    # Public website the chatbot learns from (sitemap.xml + prerendered pages).
-    SITE_URL = os.getenv('SITE_URL', 'https://www.ia.uk').rstrip('/')
-    CHAT_KNOWLEDGE_MAX_AGE_HOURS  = int(os.getenv('CHAT_KNOWLEDGE_MAX_AGE_HOURS', '24'))
-    # Hard caps on Gemini spend. Off-topic questions and greetings never reach
-    # the AI at all; these bound what's left.
-    CHAT_MAX_AI_CALLS_PER_SESSION = int(os.getenv('CHAT_MAX_AI_CALLS_PER_SESSION', '15'))
-    CHAT_MAX_AI_CALLS_PER_DAY     = int(os.getenv('CHAT_MAX_AI_CALLS_PER_DAY', '500'))
-    # Meaning-based matching (app/services/embedding_service.py). Uses
-    # AI_API_KEY; without it, or while the API is failing, the chatbot falls
-    # back to keyword search automatically.
-    EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'gemini-embedding-2')
-    EMBEDDING_DIM   = int(os.getenv('EMBEDDING_DIM', '768'))
-
-    # ── Monitoring ───────────────────────────────────────────────────────────
-    MONITORING_ENABLED     = os.getenv('MONITORING_ENABLED', 'true').lower() == 'true'
-    SLOW_REQUEST_MS        = int(os.getenv('SLOW_REQUEST_MS', '2000'))
-    MEMORY_WARN_MB         = int(os.getenv('MEMORY_WARN_MB', '700'))
-    # Retention for the automatic daily clean-up (app/services/maintenance.py).
-    RETENTION_PAGE_VIEWS_DAYS     = int(os.getenv('RETENTION_PAGE_VIEWS_DAYS', '395'))
-    RETENTION_CHAT_DAYS           = int(os.getenv('RETENTION_CHAT_DAYS', '90'))
+    # Retention for `flask maintenance purge` (app/services/maintenance.py).
     RETENTION_AUDIT_DAYS          = int(os.getenv('RETENTION_AUDIT_DAYS', '730'))
-    RETENTION_METRICS_DAYS        = int(os.getenv('RETENTION_METRICS_DAYS', '30'))
 
     @staticmethod
     def database_url() -> str:
@@ -171,7 +143,6 @@ class TestingConfig(BaseConfig):
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=5)
     RATELIMIT_STORAGE_URI = 'memory://'
     WTF_CSRF_ENABLED = False
-    MONITORING_ENABLED = False
 
 
 class ProductionConfig(BaseConfig):

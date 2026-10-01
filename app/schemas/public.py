@@ -5,16 +5,6 @@ from marshmallow import fields, validate
 from .base import BaseSchema
 
 
-class ChatRequestSchema(BaseSchema):
-    session_id = fields.String(load_default=None, allow_none=True, validate=validate.Length(max=36))
-    message = fields.String(required=True, validate=validate.Length(min=1, max=2000))
-
-
-class ChatResponseSchema(BaseSchema):
-    reply = fields.String(required=True)
-    type = fields.String(required=True)
-
-
 # Honeypot: a field real users never see or fill (hidden off-screen in the
 # frontend), so any non-empty value here means the submitter is a bot blindly
 # filling every input it finds. Optional/lenient on purpose -- it must never

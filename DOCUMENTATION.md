@@ -35,12 +35,7 @@ app/
       job_routes.py         POST /job-applications
       job_posting_routes.py GET  /job-postings
       remote_support_routes.py POST /remote-support-request
-    chat/                  # AI chatbot widget backend
-      routes.py            POST /chat
-      service.py            session/message persistence, ticket handoff
-      ai_gateway.py          Gemini API wrapper
-    settings/routes.py     # feature toggles: season, chatbot, enquiry-forwarding, AI key
-    analytics/routes.py    # page-view tracking + admin summary
+    settings/routes.py     # feature toggles: season, enquiry-forwarding
     health/routes.py       # /, /healthz, /readyz
     media/routes.py        # GET /media/projects/<file_name> (decrypts on the fly)
 
@@ -125,12 +120,10 @@ can't send `application/json`).
 | `MS_AUTH_TENANT_ID` / `MS_AUTH_CLIENT_ID` / `MS_AUTH_CLIENT_SECRET` | no | Defaults to the `GRAPH_*` values above — override only if login should use a different app registration. |
 | `MS_AUTH_SP_ID` | no | Service principal ID of the "Tech Support" app (default baked in). |
 | `MS_AUTH_ADMIN_ROLE_ID` | no | App Role ID for `ia-support-admin` (default baked in). |
-| `AI_PROVIDER` / `AI_MODEL_NAME` | no | Chatbot LLM provider/model (currently `gemini`). |
-| `AI_API_KEY` | no | Fallback Gemini key; can also be set/rotated from Admin → Settings (stored encrypted in `site_settings` via `ai_config_service`). |
 | `MEDIA_ENCRYPTION_KEY` | prod | Fernet key — project images/CVs/documents are encrypted at rest. |
 | `MEDIA_UPLOAD_DIR` | no | Where encrypted media files live (defaults to a temp dir). |
-| `SITE_SETTINGS_DIR` | no | Where the flat-file settings JSON (season/chatbot/enquiry-forwarding) lives. |
-| `PUBLIC_CONTACT_EMAIL` / `PUBLIC_CONTACT_PHONE` | no | Shown in chatbot/emails. |
+| `SITE_SETTINGS_DIR` | no | Where the flat-file settings JSON (season/enquiry-forwarding) lives. |
+| `PUBLIC_CONTACT_EMAIL` / `PUBLIC_CONTACT_PHONE` | no | Shown in emails. |
 | `REDIS_URL` | no | Rate-limiter storage backend for multi-worker deployments (defaults to in-memory, which is per-process only). |
 | `APPINSIGHTS_CONNECTION_STRING` | no | Azure App Insights, if used. |
 
@@ -149,13 +142,11 @@ Generate a `MEDIA_ENCRYPTION_KEY`: `python3 -c "from cryptography.fernet import 
 | `job_applications` | Careers applications | `cv_blob_url` (encrypted file name), `status` (new/reviewed/shortlisted/rejected) |
 | `job_postings` | Open roles shown publicly | `responsibilities`/`requirements` (JSON arrays), `status` (active/closed) |
 | `projects` | "Client stories" portfolio | `service_type`, `tags` (JSON), `image_file_id` (encrypted local image) or `image_url` (external), `status` (draft/published) |
-| `chat_sessions` / `chat_messages` | Chatbot widget conversations | `ticket_flow_state`/`ticket_flow_data` (JSON) drive the in-chat ticket-creation flow |
-| `page_views` | Analytics | `device_type`, `browser`, `os`, `ip_hash` (not raw IP) |
 | `audit_logs` | Every admin action | `actor_user_id` (**email string**, not a FK — no users table), `action`, `entity`, `diff` (JSON) |
-| `site_settings` | Key/value JSON store | Currently only used by `ai_config_service` for the encrypted Gemini key |
+| `site_settings` | Key/value JSON store | Currently unused (kept for future settings) |
 | `token_blacklist` | Revoked JWTs | `jti` + `expires_at`, checked on every request via `jwt.token_in_blocklist_loader` |
 
-Feature toggles (`season`, `chatbot`, `enquiry_forwarding`) are **not** in
+Feature toggles (`season`, `enquiry_forwarding`) are **not** in
 the database — they live in a flat JSON file (`app/services/file_settings.py`),
 deliberately simple since they're rarely-changed, non-critical settings.
 
@@ -173,11 +164,9 @@ without an explicit blueprint `url_prefix`, and none is set).
 | POST | `/job-applications` | `multipart/form-data` (CV upload), emails HR with the CV attached + sends an applicant confirmation |
 | GET | `/job-postings` | Active postings only |
 | POST | `/remote-support-request` | Creates an external ticket |
-| POST | `/chat` | Chatbot widget turn — see Services → AI Gateway below |
 | GET | `/job-postings`, `/projects` | Public listings (the latter lives in `admin/routes.py` but is unauthenticated) |
-| POST | `/analytics/track` | Page-view beacon |
 | GET | `/`, `/healthz`, `/readyz` | Health checks |
-| GET | `/settings/season`, `/settings/chatbot` | Public reads of the two visitor-facing toggles |
+| GET | `/settings/season` | Public read of the visitor-facing season toggle |
 | GET | `/media/projects/<file_name>` | Decrypts and streams a project image |
 
 ### Admin (`@roles_required('admin')` unless noted)
@@ -195,9 +184,7 @@ without an explicit blueprint `url_prefix`, and none is set).
 | GET/POST/PATCH/DELETE | `/admin/projects[/​<id>]`, `/admin/projects/<id>/image` | Manage portfolio; image upload endpoint |
 | GET | `/admin/stats` | Dashboard counts + status breakdowns |
 | GET | `/admin/audit-logs[/​<id>]` | Paginated, filterable by entity/action/actor (partial email match) |
-| GET | `/admin/analytics` | Page-view summary |
-| GET/PATCH | `/admin/settings/season`, `/admin/settings/chatbot`, `/admin/settings/enquiry-forwarding` | Feature toggles |
-| GET/PATCH/DELETE | `/admin/settings/ai` | Gemini API key (never echoed back once saved) |
+| GET/PATCH | `/admin/settings/season`, `/admin/settings/enquiry-forwarding` | Feature toggles |
 
 Every list/mutate admin route calls `log_audit_action(...)` — nothing
 happens silently.
@@ -218,21 +205,8 @@ happens silently.
   (a down ticket platform shouldn't block a form submission).
 - **`media_service.py`** — Fernet-encrypts/decrypts uploaded images and
   documents (CVs) at rest on local disk.
-- **`crypto_service.py`** — shared Fernet helper used by `ai_config_service`
-  to store the Gemini key encrypted rather than plaintext.
-- **`ai_config_service.py`** — get/set/clear the Gemini API key in
-  `site_settings`.
-- **`file_settings.py`** — flat-file JSON store for `season`/`chatbot`/`enquiry_forwarding`.
+- **`file_settings.py`** — flat-file JSON store for `season`/`enquiry_forwarding`.
 - **`audit_service.py`** — `log_audit_action(...)`, single insert helper.
-
-## Chatbot / AI gateway
-
-`app/blueprints/chat/` implements a stateful chat widget: `ChatSession` +
-`ChatMessage` persist the conversation; `ai_gateway.py` wraps the Gemini
-API (via `AI_API_KEY`, falls back to a static "please call us" reply if
-unconfigured); `service.py` handles an in-chat flow that can hand off to
-`create_ticket()` when a visitor wants to open a support ticket without
-leaving the chat.
 
 ## Local development
 

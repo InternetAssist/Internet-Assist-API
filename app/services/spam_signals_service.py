@@ -22,7 +22,7 @@ _MAX_LINKS = 2  # legitimate enquiries essentially never contain more than one o
 def _refresh_tor_list() -> None:
     # Called with _refresh_lock held; releases it when done.
     try:
-        resp = requests.get(_TOR_LIST_URL, timeout=8)
+        resp = requests.get(_TOR_LIST_URL, timeout=5)
         resp.raise_for_status()
         ips = {line.strip() for line in resp.text.splitlines() if line.strip()}
         if ips:
@@ -47,11 +47,10 @@ def is_tor_exit_node(ip: str | None) -> bool:
     of Tor, so this is a high-confidence, low-collateral-damage signal."""
     if not ip:
         return False
-    # Refresh in the background -- never make a visitor's form submission
-    # wait up to 8s on Tor's list server. Until the first fetch lands this
-    # fails open (empty set), same as when the fetch fails.
+    # Refreshed inside this request, at most every 6 hours (no background
+    # thread). A failed fetch fails open and backs off for 10 minutes.
     if time.time() - _tor_cache['fetched_at'] > _TOR_CACHE_TTL_SECONDS and _refresh_lock.acquire(blocking=False):
-        threading.Thread(target=_refresh_tor_list, name='tor-refresh', daemon=True).start()
+        _refresh_tor_list()
     return ip in _tor_cache['ips']
 
 

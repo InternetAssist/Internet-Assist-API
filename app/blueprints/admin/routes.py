@@ -25,7 +25,6 @@ from app.schemas.admin import (
     JobPostingCreateSchema,
     PaginationQuerySchema, PatchStatusSchema, ProjectCreateSchema, ProjectPatchSchema,
 )
-from app.services import background
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_job_status_update
 from app.services.media_service import (
@@ -418,13 +417,15 @@ def patch_job(payload, job_id):
         ip=request.remote_addr,
     )
     if old_status != new_status:
-        background.submit(
-            send_job_status_update,
-            recipient_email=job.email,
-            recipient_name=job.full_name,
-            position=job.position,
-            new_status=new_status,
-        )
+        try:
+            send_job_status_update(
+                recipient_email=job.email,
+                recipient_name=job.full_name,
+                position=job.position,
+                new_status=new_status,
+            )
+        except Exception:
+            pass
     return envelope(data=_serialize_job(job), status=200)
 
 

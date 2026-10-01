@@ -13,7 +13,6 @@ from .errors import register_error_handlers
 from .extensions import api, cors, db, jwt, limiter, migrate
 from .cli import register_cli
 from .logging import configure_logging
-from .services import monitoring
 from .utils.response import error_envelope
 
 _REQUEST_ID_RE = re.compile(r'^[a-zA-Z0-9\-]{8,36}$')
@@ -34,10 +33,6 @@ def create_app() -> Flask:
         config_class.validate()
         # Trust 1 proxy hop so rate limiting uses real client IP
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-
-    # First, so its timers wrap every other hook -- including requests the
-    # rate limiter rejects.
-    monitoring.init_app(app)
 
     db.init_app(app)
     migrate.init_app(app, db)
@@ -110,9 +105,7 @@ def create_app() -> Flask:
             return False
         return TokenBlacklist.is_revoked(jti)
 
-    from app.blueprints.analytics.routes import blp as analytics_blp
     from app.blueprints.media.routes import blp as media_blp
-    from app.blueprints.chat.routes import blp as chat_blp
     from app.blueprints.public.contact_routes import blp as contact_blp
     from app.blueprints.public.quote_routes import blp as quote_blp
     from app.blueprints.public.job_routes import blp as job_blp
@@ -123,10 +116,7 @@ def create_app() -> Flask:
     from app.blueprints.admin.routes import blp as admin_blp
     from app.blueprints.health.routes import blp as health_blp
     from app.blueprints.settings.routes import blp as settings_blp
-    from app.blueprints.ops.routes import blp as ops_blp
 
-    api.register_blueprint(analytics_blp)
-    api.register_blueprint(chat_blp)
     api.register_blueprint(contact_blp)
     api.register_blueprint(quote_blp)
     api.register_blueprint(job_blp)
@@ -138,6 +128,5 @@ def create_app() -> Flask:
     app.register_blueprint(health_blp)
     app.register_blueprint(media_blp)
     app.register_blueprint(settings_blp)
-    app.register_blueprint(ops_blp)
 
     return app

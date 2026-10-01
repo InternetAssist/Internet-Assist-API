@@ -15,7 +15,6 @@ _ALLOWED_CV_EXTENSIONS = {'.pdf', '.doc', '.docx'}
 from app.extensions import db, limiter
 from app.models.job_application import JobApplication
 from app.schemas.public import JobApplicationFormSchema
-from app.services import background
 from app.services.audit_service import log_audit_action
 from app.services.email_service import send_ticket_with_attachments, send_confirmation
 from app.services.media_service import save_document, load_document
@@ -75,13 +74,15 @@ def create_job(payload):
         'CV':           cv_original_name,
     }
 
-    background.submit(
-        _send_application_emails,
-        application_id=application.id,
-        fields=fields,
-        cv_file_name=cv_file_name,
-        cv_original_name=cv_original_name,
-    )
+    try:
+        _send_application_emails(
+            application_id=application.id,
+            fields=fields,
+            cv_file_name=cv_file_name,
+            cv_original_name=cv_original_name,
+        )
+    except Exception:
+        pass
 
     try:
         log_audit_action(action='public_job_created', entity='job_application', entity_id=application.id, ip=request.remote_addr)
@@ -92,8 +93,7 @@ def create_job(payload):
 
 def _send_application_emails(*, application_id: str, fields: dict, cv_file_name: str | None, cv_original_name: str | None) -> None:
     """HR notification with the CV attached, then the applicant's
-    confirmation. Runs on the background pool -- decrypting the CV and two
-    Graph calls used to hold the applicant's request open."""
+    confirmation. Runs during the applicant's request."""
     try:
         email_attachments = None
         if cv_file_name and cv_original_name:

@@ -123,9 +123,11 @@ _INDEX_HTML = """<!DOCTYPE html>
     </div>
 
     <dl class="meta">
+      {% if commit %}
       <dt>Version</dt><dd>{{ commit }}</dd>
       <dt>Deployed</dt><dd>{{ commit_date or 'unknown' }}</dd>
       <dt>Environment</dt><dd>{{ env }}</dd>
+      {% endif %}
     </dl>
 
     {% if changes %}
@@ -144,7 +146,11 @@ _INDEX_HTML = """<!DOCTYPE html>
 @blp.route('/')
 def index():
     env = current_app.config.get('APP_ENV', 'development')
-    git_info = _git_info()
+    # The deployed version is only shown outside production: publishing the
+    # exact commit tells an attacker which fixes are (or aren't) live, and it
+    # means running git on the server. Check a deploy over SSH (`git log -1`).
+    production = env == 'production'
+    git_info = {'commit': None, 'commit_date': None, 'changes': []} if production else _git_info()
 
     try:
         db.session.execute(text('SELECT 1'))
@@ -158,9 +164,7 @@ def index():
         db_ok=db_ok,
         commit=git_info['commit'],
         commit_date=git_info['commit_date'],
-        # Commit messages describe what was fixed (including security fixes)
-        # -- don't publish them from the production API.
-        changes=git_info['changes'] if env != 'production' else [],
+        changes=git_info['changes'],
         show_docs=bool(current_app.config.get('OPENAPI_SWAGGER_UI_PATH')),
     )
 

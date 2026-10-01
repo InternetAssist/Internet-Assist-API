@@ -34,7 +34,7 @@ ok()   { echo -e "${GREEN}✓ $1${NC}"; }
 warn() { echo -e "${YELLOW}⚠ $1${NC}"; }
 
 # ── Validate required vars ────────────────────────────────────────────────────
-for var in DATABASE_URL SECRET_KEY JWT_SECRET_KEY AI_API_KEY; do
+for var in DATABASE_URL SECRET_KEY JWT_SECRET_KEY; do
   if [ -z "${!var:-}" ]; then
     echo "ERROR: $var is not set in .env"
     exit 1
@@ -107,9 +107,6 @@ az webapp config appsettings set \
     SECRET_KEY="$SECRET_KEY" \
     JWT_SECRET_KEY="$JWT_SECRET_KEY" \
     CORS_ORIGINS="${CORS_ORIGINS:-https://${APP_NAME}.azurewebsites.net}" \
-    AI_PROVIDER="${AI_PROVIDER:-gemini}" \
-    AI_MODEL_NAME="${AI_MODEL_NAME:-gemini-flash-latest}" \
-    AI_API_KEY="$AI_API_KEY" \
     INITIAL_ADMIN_EMAIL="${INITIAL_ADMIN_EMAIL:-admin@internetassist.co.uk}" \
     INITIAL_ADMIN_PASSWORD="${INITIAL_ADMIN_PASSWORD:-ChangeMe123!}" \
     PUBLIC_CONTACT_EMAIL="${PUBLIC_CONTACT_EMAIL:-enquiries@internetassist.co.uk}" \

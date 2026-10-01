@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from flask import Blueprint, g, request
 
-from flask import Blueprint, current_app, g, request
-from sqlalchemy import func, text
-
-from app.extensions import db
-from app.models.chat_qa_cache import ChatQaCache
-from app.models.chat_session import ChatSession
-from app.models.site_knowledge import SiteKnowledgeChunk
-from app.services import ai_config_service, ai_usage_service, background, file_settings, knowledge_service, site_crawler
+from app.services import file_settings
 from app.services.audit_service import log_audit_action
 from app.utils.decorators import roles_required
 from app.utils.response import envelope
@@ -65,45 +58,7 @@ def patch_season():
     return envelope(data=new_value, status=200)
 
 
-# ── Chatbot widget on/off — same flat-file approach as season ─────────────────
-# Defaults to disabled — it's still under development and shouldn't appear for
-# real visitors until explicitly turned on from Admin.
-
-@blp.route('/settings/chatbot')
-def get_chatbot_settings():
-    return envelope(data=file_settings.get('chatbot'), status=200)
-
-
-@blp.route('/admin/settings/chatbot', methods=['GET'])
-@roles_required('admin')
-def admin_get_chatbot_settings():
-    return envelope(data=file_settings.get('chatbot'), status=200)
-
-
-@blp.route('/admin/settings/chatbot', methods=['PATCH'])
-@roles_required('admin')
-def patch_chatbot_settings():
-    payload = request.get_json(silent=True) or {}
-    enabled = payload.get('enabled')
-    if not isinstance(enabled, bool):
-        return envelope(error={'code': 'invalid', 'message': '`enabled` must be a boolean', 'details': None}, status=422)
-
-    current = file_settings.get('chatbot')
-    new_value = {'enabled': enabled}
-    file_settings.set('chatbot', new_value)
-
-    log_audit_action(
-        actor_user_id=g.current_user.id,
-        action='admin_update_chatbot_enabled',
-        entity='site_setting',
-        entity_id='chatbot',
-        diff={'old': current, 'new': new_value},
-        ip=request.remote_addr,
-    )
-    return envelope(data=new_value, status=200)
-
-
-# ── Enquiry forwarding on/off — same flat-file approach as season/chatbot ─────
+# ── Enquiry forwarding on/off — same flat-file approach as season ───────────
 # Gates whether Contact/Quote/Job Application submissions email the enquiry
 # inbox (NOTIFY_EMAIL_1/2). The underlying form/ticket submission itself is
 # unaffected either way -- this only controls the extra email notification.
@@ -135,74 +90,3 @@ def patch_enquiry_forwarding():
         ip=request.remote_addr,
     )
     return envelope(data=new_value, status=200)
-
-
-# ── Admin: AI (Gemini) API key ─────────────────────────────────────────────────
-# Read-only -- the key itself only ever lives in the AI_API_KEY env var, set
-# directly on the server. There's no admin form to set/replace/clear it.
-
-@blp.route('/admin/settings/ai', methods=['GET'])
-@roles_required('admin')
-def admin_get_ai_settings():
-    return envelope(data={'configured': ai_config_service.is_configured()}, status=200)
-
-
-# ── Admin: chatbot health dashboard ─────────────────────────────────────────────
-# "Configured" only means a key is present, not that it currently works (wrong
-# key, expired billing, zero quota all still count as configured) -- this
-# combines that with the outcome of the most recent *real* Gemini call
-# (ai_config_service.last_status, updated by chat/service.py) plus DB
-# connectivity and cache/traffic stats into one dashboard read.
-
-@blp.route('/admin/health/chatbot', methods=['GET'])
-@roles_required('admin')
-def admin_chatbot_health():
-    try:
-        db.session.execute(text('SELECT 1'))
-        db_connected = True
-    except Exception:
-        db_connected = False
-
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-
-    return envelope(data={
-        'db_connected': db_connected,
-        'chatbot_widget_enabled': file_settings.get('chatbot').get('enabled', False),
-        'ai_configured': ai_config_service.is_configured(),
-        'ai_last_status': ai_config_service.last_status(),
-        'cache_entries': ChatQaCache.query.count(),
-        'cache_total_hits': int(db.session.query(func.coalesce(func.sum(ChatQaCache.hit_count), 0)).scalar()),
-        'sessions_today': ChatSession.query.filter(ChatSession.started_at >= today_start).count(),
-        'knowledge': {
-            **site_crawler.knowledge_status(),
-            'stored_chunks': SiteKnowledgeChunk.query.count(),
-        },
-        'meaning_search': {
-            'model': current_app.config['EMBEDDING_MODEL'],
-            # Vectors indexed and the embedding API currently reachable.
-            'active': knowledge_service.meaning_active(),
-            'calibrated': knowledge_service.semantic_thresholds() is not None,
-        },
-        'usage_today': ai_usage_service.today(),
-        'usage_last_14_days': ai_usage_service.last_days(14),
-        'limits': {
-            'ai_calls_per_day': current_app.config['CHAT_MAX_AI_CALLS_PER_DAY'],
-            'ai_calls_per_session': current_app.config['CHAT_MAX_AI_CALLS_PER_SESSION'],
-        },
-    }, status=200)
-
-
-@blp.route('/admin/chatbot/reindex', methods=['POST'])
-@roles_required('admin')
-def admin_chatbot_reindex():
-    """Re-crawl the website into the chatbot's knowledge now. Runs in the
-    background -- poll /admin/health/chatbot for the result."""
-    background.submit(site_crawler.rebuild_knowledge)
-    log_audit_action(
-        actor_user_id=g.current_user.id,
-        action='admin_chatbot_reindex',
-        entity='site_setting',
-        entity_id='chat_knowledge',
-        ip=request.remote_addr,
-    )
-    return envelope(data={'started': True}, status=202)
