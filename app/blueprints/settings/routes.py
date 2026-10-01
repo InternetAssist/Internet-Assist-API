@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from flask import Blueprint, g, request
 
-from app.services import file_settings
+from app.extensions import limiter
+from app.services import data_cleanup, file_settings
 from app.services.audit_service import log_audit_action
 from app.utils.decorators import roles_required
 from app.utils.response import envelope
@@ -90,3 +91,63 @@ def patch_enquiry_forwarding():
         ip=request.remote_addr,
     )
     return envelope(data=new_value, status=200)
+
+
+# ── Data clean-up — permanently delete contacts / quotes / audit logs ─────────
+# Admin-only, CSRF-guarded like every admin write, rate-limited, and the API
+# itself requires the typed confirmation phrase (not just the UI). The
+# clean-up is recorded in the audit log *after* deleting, so even clearing
+# all audit logs leaves a record of who did it.
+
+def _parse_age(raw) -> tuple[int | None, str | None]:
+    if raw in (None, '', 'all'):
+        return None, None
+    try:
+        days = int(raw)
+    except (TypeError, ValueError):
+        return None, 'invalid'
+    return (days, None) if days in data_cleanup.AGE_OPTIONS_DAYS else (None, 'invalid')
+
+
+@blp.route('/admin/data-cleanup', methods=['GET'])
+@roles_required('admin')
+def admin_data_cleanup_counts():
+    days, err = _parse_age(request.args.get('older_than_days'))
+    if err:
+        return envelope(error={'code': 'invalid', 'message': 'older_than_days must be one of '
+                               f'{list(data_cleanup.AGE_OPTIONS_DAYS)} or "all"', 'details': None}, status=422)
+    return envelope(data={
+        'older_than_days': days,
+        'counts': data_cleanup.counts(days),
+        'age_options_days': list(data_cleanup.AGE_OPTIONS_DAYS),
+        'confirm_phrase': data_cleanup.CONFIRM_PHRASE,
+    }, status=200)
+
+
+@blp.route('/admin/data-cleanup', methods=['POST'])
+@roles_required('admin')
+@limiter.limit('5/hour')
+def admin_data_cleanup():
+    payload = request.get_json(silent=True) or {}
+    targets = payload.get('targets')
+    if not isinstance(targets, list) or not targets or any(t not in data_cleanup.TARGETS for t in targets):
+        return envelope(error={'code': 'invalid', 'message': 'targets must be a non-empty list of '
+                               f'{list(data_cleanup.TARGETS)}', 'details': None}, status=422)
+    days, err = _parse_age(payload.get('older_than_days'))
+    if err:
+        return envelope(error={'code': 'invalid', 'message': 'older_than_days must be one of '
+                               f'{list(data_cleanup.AGE_OPTIONS_DAYS)} or "all"', 'details': None}, status=422)
+    if payload.get('confirm') != data_cleanup.CONFIRM_PHRASE:
+        return envelope(error={'code': 'confirmation_required',
+                               'message': f'Type {data_cleanup.CONFIRM_PHRASE} to confirm', 'details': None}, status=422)
+
+    targets = list(dict.fromkeys(targets))
+    deleted = data_cleanup.delete(targets, days)
+    log_audit_action(
+        actor_user_id=g.current_user.id,
+        action='admin_data_cleanup',
+        entity='data_cleanup',
+        diff={'targets': targets, 'older_than_days': days, 'deleted': deleted},
+        ip=request.remote_addr,
+    )
+    return envelope(data={'deleted': deleted, 'older_than_days': days}, status=200)

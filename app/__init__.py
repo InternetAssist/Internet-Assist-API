@@ -11,7 +11,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from .config import config_by_name
 from .errors import register_error_handlers
 from .extensions import api, cors, db, jwt, limiter, migrate
-from .cli import register_cli
 from .logging import configure_logging
 from .utils.response import error_envelope
 
@@ -45,7 +44,6 @@ def create_app() -> Flask:
     limiter.init_app(app)
     api.init_app(app)
     register_error_handlers(app)
-    register_cli(app)
 
     @app.before_request
     def _bind_request_context():

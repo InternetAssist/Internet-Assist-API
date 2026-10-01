@@ -185,6 +185,7 @@ without an explicit blueprint `url_prefix`, and none is set).
 | GET | `/admin/stats` | Dashboard counts + status breakdowns |
 | GET | `/admin/audit-logs[/​<id>]` | Paginated, filterable by entity/action/actor (partial email match) |
 | GET/PATCH | `/admin/settings/season`, `/admin/settings/enquiry-forwarding` | Feature toggles |
+| GET/POST | `/admin/data-cleanup` | Count / permanently delete contacts, quotes or audit logs (all, or older than 30/90/180/365 days). POST needs `confirm: "DELETE"`; limited to 5 per hour; each run is audit-logged |
 
 Every list/mutate admin route calls `log_audit_action(...)` — nothing
 happens silently.
@@ -206,6 +207,7 @@ happens silently.
 - **`media_service.py`** — Fernet-encrypts/decrypts uploaded images and
   documents (CVs) at rest on local disk.
 - **`file_settings.py`** — flat-file JSON store for `season`/`enquiry_forwarding`.
+- **`data_cleanup.py`** — the Admin data clean-up: counts and batch-deletes contacts, quotes or audit logs. Runs only when an admin asks; nothing runs automatically.
 - **`audit_service.py`** — `log_audit_action(...)`, single insert helper.
 
 ## Local development

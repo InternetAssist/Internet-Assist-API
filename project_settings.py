@@ -121,8 +121,6 @@ class BaseConfig:
     TICKET_API_URL       = os.getenv('TICKET_API_URL', '')
 
 
-    # Retention for `flask maintenance purge` (app/services/maintenance.py).
-    RETENTION_AUDIT_DAYS          = int(os.getenv('RETENTION_AUDIT_DAYS', '730'))
 
     @staticmethod
     def database_url() -> str:

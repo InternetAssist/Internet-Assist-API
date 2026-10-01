@@ -1,0 +1,49 @@
+# systemd service for the Internet Assist API on the CloudPanel server.
+#
+# Install (as root), replacing SITE_USER with the CloudPanel site user:
+#   sed "s/SITE_USER/<site user>/g" deploy/cloudpanel/ia-api.service > /etc/systemd/system/ia-api.service
+#   systemctl daemon-reload && systemctl enable --now ia-api
+#
+# Day to day:
+#   systemctl restart ia-api      # after a deploy
+#   systemctl status ia-api
+#   journalctl -u ia-api -f       # live logs
+
+[Unit]
+Description=Internet Assist API (gunicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=SITE_USER
+Group=SITE_USER
+WorkingDirectory=/home/SITE_USER/htdocs/api.ia.uk
+# The app reads its settings from .env in the working directory (wsgi.py).
+ExecStart=/home/SITE_USER/htdocs/api.ia.uk/.venv/bin/gunicorn -c deploy/cloudpanel/gunicorn.conf.py wsgi:app
+# Zero-downtime reload of code/config: `systemctl reload ia-api`.
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=5
+TimeoutStopSec=40
+
+# Never let the API take the whole server down: it's restarted if it goes
+# over this (normal use is ~100-150 MB).
+MemoryMax=700M
+
+# Hardening: the process can only write to the app folder and the data
+# folder, can't gain privileges, and sees a private /tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/SITE_USER/htdocs/api.ia.uk /home/SITE_USER/ia-data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
