@@ -9,7 +9,7 @@ from app.models.blog_post import BlogPost
 
 blp = Blueprint('public-sitemap', __name__, description='Dynamic sitemap')
 
-SITE_URL = 'https://www.ia.uk'
+SITE_URL = 'https://ia.uk'
 
 # Hand-maintained marketing pages — these change rarely, unlike blog posts,
 # so there's no need to generate them from the frontend route table.
